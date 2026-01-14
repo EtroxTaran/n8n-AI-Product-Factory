@@ -1,0 +1,170 @@
+{
+  "name": "AI Product Factory - Perplexity Research Tool",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "query",
+              "type": "string"
+            },
+            {
+              "name": "context",
+              "type": "string"
+            },
+            {
+              "name": "research_type",
+              "type": "string"
+            },
+            {
+              "name": "max_sources",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "subworkflow-entry",
+      "name": "Subworkflow Entry Point",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Perplexity Research Tool - Input Validator\n// Prepares the research request for Perplexity Sonar\n// Also stores state in static data for access after the AI Agent\n\nconst input = $input.first().json;\n\n// Validate required fields\nconst query = input.query;\nif (!query || query.trim() === '') {\n  throw new Error('Missing required field: query');\n}\n\nconst context = input.context || '';\nconst research_type = input.research_type || 'general';\nconst max_sources = input.max_sources || 5;\n\n// Generate request ID\nconst request_id = `research_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;\n\n// Build research prompt based on type\nlet systemPrompt = '';\nlet formattedQuery = query;\n\nswitch (research_type) {\n  case 'fact_check':\n    systemPrompt = `You are a meticulous fact-checker. Verify the following claim using reliable sources. \nProvide:\n1. Whether the claim is TRUE, FALSE, or PARTIALLY TRUE\n2. Supporting evidence with citations\n3. Context that might nuance the claim\n\nAlways cite your sources with URLs when possible.`;\n    formattedQuery = `Fact check this claim: \"${query}\"`;\n    break;\n    \n  case 'market_research':\n    systemPrompt = `You are a market research analyst. Research the following topic thoroughly.\nProvide:\n1. Current market trends and data\n2. Key players and their market positions\n3. Recent developments (last 12 months)\n4. Growth projections if available\n\nCite all statistics and data with sources.`;\n    formattedQuery = `Market research: ${query}`;\n    break;\n    \n  case 'best_practices':\n    systemPrompt = `You are a technical consultant researching industry best practices.\nProvide:\n1. Current best practices for the topic\n2. Real-world implementation examples\n3. Common pitfalls to avoid\n4. Recommended approaches with trade-offs\n\nInclude links to documentation, case studies, or authoritative sources.`;\n    formattedQuery = `Best practices for: ${query}`;\n    break;\n    \n  case 'risk_mitigation':\n    systemPrompt = `You are a risk management specialist researching mitigation strategies.\nProvide:\n1. Proven mitigation approaches\n2. Case studies of successful risk management\n3. Tools and frameworks commonly used\n4. Implementation considerations\n\nCite sources and include real-world examples.`;\n    formattedQuery = `Risk mitigation strategies for: ${query}`;\n    break;\n    \n  case 'competitive_analysis':\n    systemPrompt = `You are a competitive intelligence analyst.\nProvide:\n1. Key competitors in this space\n2. Their strengths and weaknesses\n3. Market positioning and differentiation\n4. Recent strategic moves\n\nUse recent data and cite sources.`;\n    formattedQuery = `Competitive analysis: ${query}`;\n    break;\n    \n  default:\n    systemPrompt = `You are a knowledgeable research assistant. Research the following topic thoroughly and provide accurate, well-sourced information. Always cite your sources with URLs when possible.`;\n    formattedQuery = query;\n}\n\n// Add context if provided\nif (context && context.trim() !== '') {\n  formattedQuery += `\\n\\nAdditional context: ${context}`;\n}\n\nconst outputData = {\n  request_id,\n  original_query: query,\n  formatted_query: formattedQuery,\n  system_prompt: systemPrompt,\n  research_type,\n  max_sources,\n  context,\n  timestamp: new Date().toISOString()\n};\n\n// Store in static data for Parse Research Response to access after AI Agent\nconst staticData = $getWorkflowStaticData('global');\nstaticData.researchInputState = outputData;\n\nreturn { json: outputData };"
+      },
+      "id": "validate-input",
+      "name": "Input Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "={{ $json.system_prompt }}"
+        },
+        "text": "={{ $json.formatted_query }}"
+      },
+      "id": "perplexity-agent",
+      "name": "Perplexity Research Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [460, 0]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.MODEL_RESEARCH || 'perplexity/sonar-pro' }}",
+        "options": {
+          "temperature": 0.4,
+          "maxTokens": 2048
+        }
+      },
+      "id": "perplexity-model",
+      "name": "Perplexity Sonar",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [460, 220],
+      "credentials": {
+        "openRouterApi": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and structure the Perplexity response\n// Use static data to access input from before the AI Agent\n\nconst staticData = $getWorkflowStaticData('global');\nconst inputData = staticData.researchInputState || {};\nconst agentResponse = $input.first().json;\n\n// Get the response text\nconst responseText = agentResponse.output || agentResponse.text || '';\n\n// Try to extract sources from the response\n// Perplexity often includes URLs in the response\nconst urlRegex = /https?:\\/\\/[^\\s)\\]]+/g;\nconst foundUrls = responseText.match(urlRegex) || [];\n\n// Clean and deduplicate URLs\nconst sources = [...new Set(foundUrls)]\n  .map(url => url.replace(/[.,;:!?]$/, '')) // Remove trailing punctuation\n  .slice(0, inputData.max_sources);\n\n// Structure the response\nreturn {\n  json: {\n    request_id: inputData.request_id,\n    query: inputData.original_query,\n    research_type: inputData.research_type,\n    status: 'success',\n    response: responseText,\n    sources: sources,\n    source_count: sources.length,\n    timestamp: new Date().toISOString(),\n    metadata: {\n      model: 'perplexity/sonar',\n      context_provided: inputData.context ? true : false\n    }\n  }\n};"
+      },
+      "id": "parse-response",
+      "name": "Parse Research Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final Output - Return research results to caller workflow\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    request_id: data.request_id,\n    query: data.query,\n    research_type: data.research_type,\n    status: data.status || 'completed',\n    response: data.response,\n    sources: data.sources || [],\n    source_count: data.source_count || 0,\n    timestamp: data.timestamp,\n    metadata: data.metadata || {}\n  }\n};"
+      },
+      "id": "output-node",
+      "name": "Subworkflow Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 0]
+    }
+  ],
+  "connections": {
+    "Subworkflow Entry Point": {
+      "main": [
+        [
+          {
+            "node": "Input Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Validator": {
+      "main": [
+        [
+          {
+            "node": "Perplexity Research Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity Sonar": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Perplexity Research Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity Research Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Research Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Research Response": {
+      "main": [
+        [
+          {
+            "node": "Subworkflow Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ai-product-factory"
+  },
+  "id": "ai-product-factory-perplexity-research",
+  "tags": [
+    {
+      "id": "ai-product-factory",
+      "name": "AI Product Factory"
+    }
+  ]
+}

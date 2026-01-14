@@ -1,0 +1,673 @@
+{
+  "name": "Titan - Adversarial Agent Loop",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "task",
+              "type": "string"
+            },
+            {
+              "name": "context",
+              "type": "string"
+            },
+            {
+              "name": "creator_prompt",
+              "type": "string"
+            },
+            {
+              "name": "critic_prompt",
+              "type": "string"
+            },
+            {
+              "name": "refiner_prompt",
+              "type": "string"
+            },
+            {
+              "name": "max_iterations",
+              "type": "number"
+            },
+            {
+              "name": "score_threshold",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "trigger-1",
+      "name": "Subworkflow Entry Point",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate required input fields\nconst input = $input.first().json;\n\nif (!input.task) {\n  throw new Error('Missing required field: task');\n}\n\nif (!input.creator_prompt) {\n  throw new Error('Missing required field: creator_prompt');\n}\n\nif (!input.critic_prompt) {\n  throw new Error('Missing required field: critic_prompt');\n}\n\n// Generate a unique session ID using UUID v4 format\nconst generateSessionId = () => {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {\n    const r = Math.random() * 16 | 0;\n    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);\n  });\n};\n\nconst sessionId = generateSessionId();\n\n// Enhanced sanitization to prevent prompt injection and XSS\nconst sanitizeInput = (text) => {\n  if (!text) return '';\n  return text\n    .replace(/\\{\\{/g, '{ {')           // n8n template injection\n    .replace(/\\}\\}/g, '} }')           // n8n template injection\n    .replace(/\\$\\(/g, '$ (')           // Shell command substitution\n    .replace(/`/g, \"'\")                // Backtick (template literals/shell)\n    .replace(/\\$\\{/g, '$ {')           // Template literal injection\n    .replace(/<script[^>]*>/gi, '')    // XSS script tags\n    .replace(/<\\/script>/gi, '')       // XSS script closing tags\n    .replace(/javascript:/gi, '')      // JavaScript protocol\n    .replace(/on\\w+\\s*=/gi, '')        // Event handler injection\n    .trim();\n};\n\nreturn {\n  json: {\n    iteration: 0,\n    score: 0,\n    max_iterations: input.max_iterations || 5,\n    score_threshold: input.score_threshold || 9,\n    draft: '',\n    context: sanitizeInput(input.context || ''),\n    task: sanitizeInput(input.task || ''),\n    creator_prompt: input.creator_prompt || '',\n    critic_prompt: input.critic_prompt || '',\n    refiner_prompt: input.refiner_prompt || input.creator_prompt || '',\n    session_id: sessionId,\n    start_time: new Date().toISOString(),\n    iteration_history: []\n  }\n};"
+      },
+      "id": "init-loop",
+      "name": "Loop State Initializer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "={{ $json.creator_prompt }}"
+        },
+        "text": "={{ 'TASK: ' + $json.task + '\\n\\nCONTEXT:\\n' + $json.context + '\\n\\nPlease create a comprehensive draft addressing the task above.' }}"
+      },
+      "id": "agent-creator",
+      "name": "Creator - Draft Generator",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        480,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-sonnet-3.5",
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 4096
+        }
+      },
+      "id": "creator-openrouter-model",
+      "name": "Creator LLM - Claude Sonnet 3.5",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        480,
+        540
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionId": "={{ $('Loop State Initializer').item.json.session_id + '_creator' }}",
+        "maxMessages": 8
+      },
+      "id": "creator-memory",
+      "name": "Creator Memory - Zep v3",
+      "type": "n8n-nodes-zep-memory-v3.zepMemoryV3",
+      "typeVersion": 8,
+      "position": [
+        480,
+        680
+      ],
+      "credentials": {
+        "zepApi": {
+          "name": "Zep Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "name": "access_graphiti_context",
+        "description": "Access the Graphiti knowledge graph to retrieve relevant context, facts, and historical information for the current task."
+      },
+      "id": "creator-graphiti-tool",
+      "name": "Creator Tool - Knowledge Graph Access",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        480,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set draft from creator and increment iteration\nconst agentOutput = $input.first().json;\nconst initState = $('Loop State Initializer').item.json;\n\nconst draft = agentOutput.output || agentOutput.text || '';\nconst currentIteration = initState.iteration + 1;\n\nreturn {\n  json: {\n    ...initState,\n    draft: draft,\n    iteration: currentIteration,\n    last_action: 'creator',\n    iteration_history: [\n      ...initState.iteration_history,\n      {\n        iteration: currentIteration,\n        action: 'creator',\n        timestamp: new Date().toISOString(),\n        draft_length: draft.length,\n        draft_content: draft,\n        filename: `draft_iteration_${currentIteration}.md`\n      }\n    ]\n  }\n};"
+      },
+      "id": "set-draft-created",
+      "name": "Draft State Updater",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "={{ $json.critic_prompt }}"
+        },
+        "text": "={{ 'ORIGINAL TASK: ' + $json.task + '\\n\\nCONTEXT PROVIDED:\\n' + $json.context + '\\n\\nDRAFT TO EVALUATE (Iteration ' + $json.iteration + '):\\n' + $json.draft + '\\n\\n---\\n# CRITICAL INSTRUCTION\\nBefore scoring, verify facts against the provided context. Any claim that contradicts stored knowledge is an automatic deduction.\\n\\n# EVALUATION FRAMEWORK\\n1. Consistency with context (0-10)\\n2. Completeness (0-10)\\n3. Clarity (0-10)\\n4. Feasibility (0-10)\\n5. Quality (0-10)\\n\\n# OUTPUT FORMAT (STRICT JSON)\\n```json\\n{\\n  \"score\": 7.5,\\n  \"issues\": [\\n    {\"section\": \"Risk Assessment\", \"severity\": \"high\", \"issue\": \"Missing technical debt risks\"}\\n  ],\\n  \"strengths\": [\"Clear value proposition\", \"Well-defined personas\"],\\n  \"recommendations\": [\"Add source citations\", \"Include risk mitigations\"],\\n  \"breakdown\": {\\n    \"consistency\": 8,\\n    \"completeness\": 7,\\n    \"clarity\": 8,\\n    \"feasibility\": 7,\\n    \"quality\": 7.5\\n  }\\n}\\n```\\n\\nReturn ONLY the JSON object. Score of 9+ means production-ready.' }}"
+      },
+      "id": "agent-critic",
+      "name": "Critic - Quality Evaluator",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        960,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-sonnet-3.5",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 2048
+        }
+      },
+      "id": "critic-openrouter-model",
+      "name": "Critic LLM - Claude Sonnet 3.5",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        960,
+        540
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionId": "={{ $('Loop State Initializer').item.json.session_id + '_critic' }}",
+        "maxMessages": 6
+      },
+      "id": "critic-memory",
+      "name": "Critic Memory - Zep v3",
+      "type": "n8n-nodes-zep-memory-v3.zepMemoryV3",
+      "typeVersion": 8,
+      "position": [
+        960,
+        680
+      ],
+      "credentials": {
+        "zepApi": {
+          "name": "Zep Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the critic's response and update state\nconst response = $input.first().json;\nconst criticContent = response.output || response.text || '';\n\n// Get previous state - this comes from either Draft State Updater or Refined Draft State Updater\nconst inputData = $('Critic - Quality Evaluator').first().json;\n\nlet prevState;\ntry {\n  prevState = $('Refined Draft State Updater').first()?.json;\n} catch (e) {\n  prevState = null;\n}\n\nif (!prevState || !prevState.draft) {\n  try {\n    prevState = $('Draft State Updater').first()?.json;\n  } catch (e) {\n    prevState = null;\n  }\n}\n\nif (!prevState || !prevState.draft) {\n  prevState = $('Loop State Initializer').first().json;\n}\n\n// Enhanced JSON parsing with multiple fallback strategies\nlet evaluation;\nlet parseMethod = 'direct';\n\n// Strategy 1: Direct JSON parse\ntry {\n  evaluation = JSON.parse(criticContent);\n} catch (e) {\n  // Strategy 2: Extract JSON from markdown code block\n  const codeBlockMatch = criticContent.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (codeBlockMatch) {\n    try {\n      evaluation = JSON.parse(codeBlockMatch[1].trim());\n      parseMethod = 'code_block';\n    } catch (e2) { evaluation = null; }\n  }\n  \n  // Strategy 3: Extract any JSON object\n  if (!evaluation) {\n    const jsonMatch = criticContent.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      try {\n        evaluation = JSON.parse(jsonMatch[0]);\n        parseMethod = 'regex_extract';\n      } catch (e3) { evaluation = null; }\n    }\n  }\n  \n  // Strategy 4: Extract score from text patterns\n  if (!evaluation) {\n    const scorePatterns = [\n      /score[:\\s]+([\\d.]+)/i,\n      /rating[:\\s]+([\\d.]+)/i,\n      /([\\d.]+)\\s*\\/\\s*10/,\n      /grade[:\\s]+([\\d.]+)/i\n    ];\n    let extractedScore = null;\n    for (const pattern of scorePatterns) {\n      const match = criticContent.match(pattern);\n      if (match) {\n        extractedScore = parseFloat(match[1]);\n        break;\n      }\n    }\n    \n    evaluation = {\n      score: extractedScore || 5,\n      issues: ['Response was not in expected JSON format'],\n      strengths: [],\n      recommendations: ['Regenerate critic response or review manually'],\n      raw_response: criticContent.substring(0, 500)\n    };\n    parseMethod = 'text_extraction';\n  }\n}\n\n// Ensure score is a valid number between 0-10\nlet score = typeof evaluation.score === 'number' ? evaluation.score : parseFloat(evaluation.score);\nif (isNaN(score)) score = 5;\nscore = Math.max(0, Math.min(10, score));\n\nreturn {\n  json: {\n    ...prevState,\n    score: score,\n    evaluation: evaluation,\n    critic_feedback: criticContent,\n    last_action: 'critic',\n    iteration_history: [\n      ...(prevState.iteration_history || []),\n      {\n        iteration: prevState.iteration,\n        action: 'critic',\n        timestamp: new Date().toISOString(),\n        score: score,\n        issues_count: (evaluation.issues || []).length,\n        feedback_content: criticContent,\n        evaluation: evaluation,\n        filename: `critic_feedback_iteration_${prevState.iteration}.md`\n      }\n    ]\n  }\n};"
+      },
+      "id": "parse-critic",
+      "name": "Critic Response Parser",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "score-check",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": "={{ $json.score_threshold || 9 }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-score-pass",
+      "name": "Quality Threshold Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1440,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "iteration-check",
+              "leftValue": "={{ $json.iteration }}",
+              "rightValue": "={{ $json.max_iterations || 5 }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-max-iterations",
+      "name": "Iteration Limit Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "={{ $json.refiner_prompt }}"
+        },
+        "text": "={{ 'ORIGINAL TASK: ' + $json.task + '\\n\\nCURRENT DRAFT (Iteration ' + $json.iteration + '):\\n' + $json.draft + '\\n\\nCRITIC FEEDBACK:\\n' + $json.critic_feedback + '\\n\\nSCORE: ' + $json.score + '/10\\n\\n---\\nPlease refine the draft based on the critic\\'s feedback. Address ALL issues mentioned while preserving the strengths. Your goal is to achieve a score of ' + ($json.score_threshold || 9) + ' or higher.' }}"
+      },
+      "id": "agent-refiner",
+      "name": "Refiner - Draft Improver",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1920,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-sonnet-3.5",
+        "options": {
+          "temperature": 0.5,
+          "maxTokens": 4096
+        }
+      },
+      "id": "refiner-openrouter-model",
+      "name": "Refiner LLM - Claude Sonnet 3.5",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        1920,
+        740
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionId": "={{ $('Loop State Initializer').item.json.session_id + '_refiner' }}",
+        "maxMessages": 10
+      },
+      "id": "refiner-memory",
+      "name": "Refiner Memory - Zep v3",
+      "type": "n8n-nodes-zep-memory-v3.zepMemoryV3",
+      "typeVersion": 8,
+      "position": [
+        1920,
+        880
+      ],
+      "credentials": {
+        "zepApi": {
+          "name": "Zep Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "name": "research_tool",
+        "description": "Research tool for finding additional context and information from the Graphiti knowledge graph to improve the draft."
+      },
+      "id": "refiner-research-tool",
+      "name": "Refiner Tool - Knowledge Research",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1920,
+        1020
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Set refined draft and increment iteration for next loop\nconst agentOutput = $input.first().json;\nconst prevState = $('Critic Response Parser').item.json;\n\nconst refinedDraft = agentOutput.output || agentOutput.text || '';\nconst newIteration = prevState.iteration + 1;\n\nreturn {\n  json: {\n    ...prevState,\n    draft: refinedDraft,\n    iteration: newIteration,\n    last_action: 'refiner',\n    iteration_history: [\n      ...(prevState.iteration_history || []),\n      {\n        iteration: newIteration,\n        action: 'refiner',\n        timestamp: new Date().toISOString(),\n        draft_length: refinedDraft.length,\n        previous_score: prevState.score,\n        draft_content: refinedDraft,\n        filename: `refined_draft_iteration_${newIteration}.md`\n      }\n    ]\n  }\n};"
+      },
+      "id": "set-refined-draft",
+      "name": "Refined Draft State Updater",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare success output with telemetry\nconst state = $input.first().json;\nconst startTime = new Date(state.start_time || Date.now());\nconst endTime = new Date();\nconst durationMs = endTime - startTime;\n\nreturn {\n  json: {\n    status: 'success',\n    final_draft: state.draft,\n    final_score: state.score,\n    total_iterations: state.iteration,\n    session_id: state.session_id,\n    telemetry: {\n      start_time: state.start_time,\n      end_time: endTime.toISOString(),\n      duration_ms: durationMs,\n      duration_formatted: `${Math.floor(durationMs / 60000)}m ${Math.floor((durationMs % 60000) / 1000)}s`,\n      iteration_history: state.iteration_history,\n      final_evaluation: state.evaluation\n    }\n  }\n};"
+      },
+      "id": "output-success",
+      "name": "Success Output Builder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare max iterations output with telemetry\nconst state = $input.first().json;\nconst startTime = new Date(state.start_time || Date.now());\nconst endTime = new Date();\nconst durationMs = endTime - startTime;\n\nreturn {\n  json: {\n    status: 'max_iterations_reached',\n    final_draft: state.draft,\n    final_score: state.score,\n    total_iterations: state.iteration,\n    session_id: state.session_id,\n    message: `Reached maximum iterations (${state.max_iterations}) with score ${state.score}/${state.score_threshold}`,\n    telemetry: {\n      start_time: state.start_time,\n      end_time: endTime.toISOString(),\n      duration_ms: durationMs,\n      duration_formatted: `${Math.floor(durationMs / 60000)}m ${Math.floor((durationMs % 60000) / 1000)}s`,\n      iteration_history: state.iteration_history,\n      final_evaluation: state.evaluation\n    }\n  }\n};"
+      },
+      "id": "output-max-iter",
+      "name": "Max Iterations Output Builder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "id": "output-merge",
+      "name": "Output Aggregator",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2160,
+        350
+      ]
+    }
+  ],
+  "connections": {
+    "Subworkflow Entry Point": {
+      "main": [
+        [
+          {
+            "node": "Loop State Initializer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop State Initializer": {
+      "main": [
+        [
+          {
+            "node": "Creator - Draft Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Creator - Draft Generator": {
+      "main": [
+        [
+          {
+            "node": "Draft State Updater",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Creator LLM - Claude Sonnet 3.5": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Creator - Draft Generator",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Creator Memory - Zep v3": {
+      "ai_memory": [
+        [
+          {
+            "node": "Creator - Draft Generator",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Creator Tool - Knowledge Graph Access": {
+      "ai_tool": [
+        [
+          {
+            "node": "Creator - Draft Generator",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft State Updater": {
+      "main": [
+        [
+          {
+            "node": "Critic - Quality Evaluator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic - Quality Evaluator": {
+      "main": [
+        [
+          {
+            "node": "Critic Response Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic LLM - Claude Sonnet 3.5": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Critic - Quality Evaluator",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic Memory - Zep v3": {
+      "ai_memory": [
+        [
+          {
+            "node": "Critic - Quality Evaluator",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic Response Parser": {
+      "main": [
+        [
+          {
+            "node": "Quality Threshold Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quality Threshold Gate": {
+      "main": [
+        [
+          {
+            "node": "Success Output Builder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Iteration Limit Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Iteration Limit Gate": {
+      "main": [
+        [
+          {
+            "node": "Max Iterations Output Builder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Refiner - Draft Improver",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner - Draft Improver": {
+      "main": [
+        [
+          {
+            "node": "Refined Draft State Updater",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner LLM - Claude Sonnet 3.5": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Refiner - Draft Improver",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner Memory - Zep v3": {
+      "ai_memory": [
+        [
+          {
+            "node": "Refiner - Draft Improver",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner Tool - Knowledge Research": {
+      "ai_tool": [
+        [
+          {
+            "node": "Refiner - Draft Improver",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refined Draft State Updater": {
+      "main": [
+        [
+          {
+            "node": "Critic - Quality Evaluator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Output Builder": {
+      "main": [
+        [
+          {
+            "node": "Output Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Max Iterations Output Builder": {
+      "main": [
+        [
+          {
+            "node": "Output Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Titan",
+      "createdAt": "2026-01-12T00:00:00.000Z",
+      "updatedAt": "2026-01-12T00:00:00.000Z"
+    },
+    {
+      "name": "SubWorkflow",
+      "createdAt": "2026-01-12T00:00:00.000Z",
+      "updatedAt": "2026-01-12T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2026-01-13T00:00:00.000Z",
+  "versionId": "5"
+}

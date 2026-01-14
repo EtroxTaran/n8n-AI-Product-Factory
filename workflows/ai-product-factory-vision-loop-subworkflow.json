@@ -1,0 +1,763 @@
+{
+  "name": "AI Product Factory - Vision Adversarial Loop",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "project_id",
+              "type": "string"
+            },
+            {
+              "name": "session_id",
+              "type": "string"
+            },
+            {
+              "name": "context",
+              "type": "string"
+            },
+            {
+              "name": "tech_standards",
+              "type": "string"
+            },
+            {
+              "name": "max_iterations",
+              "type": "number"
+            },
+            {
+              "name": "score_threshold",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "subworkflow-entry",
+      "name": "Subworkflow Entry Point",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vision Loop - State Initializer\n// Initializes the adversarial loop state\n\nconst input = $input.first().json;\n\n// Validate required fields\nif (!input.project_id) {\n  throw new Error('Missing required field: project_id');\n}\n\nif (!input.session_id) {\n  throw new Error('Missing required field: session_id');\n}\n\n// Parse config\nconst max_iterations = input.max_iterations || 5;\nconst score_threshold = input.score_threshold || 90;\n\n// Parse tech standards if string\nlet techStandards = [];\nif (input.tech_standards) {\n  if (typeof input.tech_standards === 'string') {\n    try {\n      techStandards = JSON.parse(input.tech_standards);\n    } catch (e) {\n      techStandards = [{ raw: input.tech_standards }];\n    }\n  } else {\n    techStandards = input.tech_standards;\n  }\n}\n\n// Generate unique loop session ID\nconst loop_id = 'vision_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);\n\n// Sanitize context to prevent injection\nconst sanitizeInput = (text) => {\n  if (!text) return '';\n  return text\n    .replace(/\\{\\{/g, '{ {')\n    .replace(/\\}\\}/g, '} }')\n    .replace(/\\$\\(/g, '$ (')\n    .replace(/`/g, \"'\")\n    .replace(/\\$\\{/g, '$ {')\n    .replace(/<script[^>]*>/gi, '')\n    .replace(/javascript:/gi, '')\n    .replace(/on\\w+\\s*=/gi, '')\n    .trim();\n};\n\nreturn {\n  json: {\n    project_id: input.project_id,\n    session_id: input.session_id,\n    loop_id,\n    phase: 1,\n    iteration: 0,\n    score: 0,\n    max_iterations,\n    score_threshold,\n    context: sanitizeInput(input.context || ''),\n    tech_standards: techStandards,\n    draft: '',\n    feedback: '',\n    iteration_history: [],\n    start_time: new Date().toISOString(),\n    status: 'initializing'\n  }\n};"
+      },
+      "id": "state-initializer",
+      "name": "Loop State Initializer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "## Context\nYou are \"The Visionary\" - a product strategist with deep expertise in crafting compelling product visions that inspire teams and attract investment.\n\n## Objective\nCreate a comprehensive Product Vision document that clearly articulates:\n1. **Problem Statement**: The pain points we're solving\n2. **Value Proposition**: Why customers will choose us\n3. **Target Personas**: Detailed user archetypes with JTBD (Jobs-to-be-Done) analysis\n4. **Differentiation**: What makes us unique in the market\n5. **Success Metrics**: How we'll measure product-market fit\n6. **Vision Statement**: The inspiring north star\n\n## Style\nThink step-by-step before writing. Structure your output with clear headings.\nUse the JTBD (Jobs-to-be-Done) framework for personas.\nBe specific and actionable, not generic.\n\n## Tone\nInspirational yet grounded. Ambitious but realistic.\n\n## Audience\nStakeholders, investors, and engineering teams.\n\n## Response Format\nMarkdown document with sections for each objective item.\nInclude concrete examples and data where available from context.\nDo NOT wrap the response in code blocks - output pure markdown."
+        },
+        "text": "=## Task\nCreate a comprehensive Product Vision document for this project.\n\n## Project Context\n{{ $json.context }}\n\n## Technical Standards to Consider\n{{ JSON.stringify($json.tech_standards, null, 2) }}\n\n## Instructions\nThink step-by-step:\n1. First, understand the project context and goals\n2. Identify the core problem being solved\n3. Define who will use this and their jobs-to-be-done\n4. Articulate what makes this solution unique\n5. Define measurable success criteria\n6. Craft an inspiring vision statement\n\nNow create the Product Vision document:"
+      },
+      "id": "visionary-agent",
+      "name": "Visionary Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [460, 0]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.MODEL_ARCHITECT || 'anthropic/claude-sonnet-3.5' }}",
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 4096
+        }
+      },
+      "id": "visionary-model",
+      "name": "Claude 3.5 Sonnet (Visionary)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [460, 220],
+      "credentials": {
+        "openRouterApi": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionId": "={{ $('Loop State Initializer').item.json.project_id + '_visionary' }}",
+        "maxMessages": 8
+      },
+      "id": "visionary-memory",
+      "name": "Visionary Memory",
+      "type": "n8n-nodes-zep-memory-v3.zepMemoryV3",
+      "typeVersion": 8,
+      "position": [460, 420],
+      "credentials": {
+        "zepApi": {
+          "id": "zep-api",
+          "name": "Zep Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "name": "access_knowledge_graph",
+        "description": "Access the Graphiti knowledge graph to retrieve project context, technical standards, and previous decisions. Use this to ensure alignment with existing knowledge."
+      },
+      "id": "visionary-tool-graphiti",
+      "name": "Knowledge Graph Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.2,
+      "position": [600, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update state after Visionary creates draft\n\nconst initState = $('Loop State Initializer').item.json;\nconst agentResponse = $input.first().json;\n\nconst draft = agentResponse.output || agentResponse.text || '';\nconst newIteration = initState.iteration + 1;\n\n// Record in iteration history\nconst historyEntry = {\n  iteration: newIteration,\n  action: 'visionary',\n  agent: 'Visionary (Claude 3.5 Sonnet)',\n  timestamp: new Date().toISOString(),\n  draft_length: draft.length,\n  draft_preview: draft.substring(0, 200) + '...',\n  filename: `Vision_v${newIteration}.md`\n};\n\nreturn {\n  json: {\n    ...initState,\n    iteration: newIteration,\n    draft,\n    last_action: 'visionary',\n    iteration_history: [\n      ...(initState.iteration_history || []),\n      historyEntry\n    ],\n    status: 'draft_created'\n  }\n};"
+      },
+      "id": "draft-state-updater",
+      "name": "Draft State Updater",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 0]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "## Context\nYou are \"The Ruthless VC\" - a skeptical investor who has seen thousands of pitches and knows exactly what separates winners from losers.\n\n## Objective\nCritically evaluate the Product Vision document. Your job is NOT to be kind.\nFind every weakness, assumption, and gap. Then provide a score (0-100).\n\nThink step-by-step:\n1. Read the entire vision carefully\n2. Identify weak assumptions\n3. Find missing market data\n4. Check for competitive blindspots\n5. Verify claims using your research tool if needed\n6. Score each criterion\n\n## Scoring Criteria (with weights)\n- problem_clarity (15%): Is the problem clearly defined and validated?\n- value_prop_strength (25%): Is the value proposition compelling and differentiated?\n- persona_depth (15%): Are personas specific with real JTBD insights?\n- differentiation (20%): Is the competitive advantage clear and defensible?\n- metrics_quality (10%): Are success metrics specific, measurable, achievable?\n- market_validation (15%): Is there evidence of market need?\n\n## Style\nAdversarial but constructive. Point out problems AND suggest what's needed.\n\n## Tone\nDirect, challenging, no sugar-coating.\n\n## Audience\nThe product team who needs honest feedback.\n\n## Response Format\nYou MUST respond with ONLY valid JSON. No markdown, no explanation:\n{\n  \"score\": <0-100 weighted average>,\n  \"scores\": {\n    \"problem_clarity\": <0-100>,\n    \"value_prop_strength\": <0-100>,\n    \"persona_depth\": <0-100>,\n    \"differentiation\": <0-100>,\n    \"metrics_quality\": <0-100>,\n    \"market_validation\": <0-100>\n  },\n  \"issues\": [\n    {\"criterion\": \"...\", \"severity\": \"critical|major|minor\", \"detail\": \"...\"}\n  ],\n  \"strengths\": [\"...\"],\n  \"fact_checks\": [\n    {\"claim\": \"...\", \"verified\": true|false, \"source\": \"...\"}\n  ],\n  \"recommendations\": [\"...\"]\n}"
+        },
+        "text": "=## Product Vision Document to Evaluate\n\n{{ $json.draft }}\n\n---\n\n## Your Task\nCritically evaluate this Product Vision document.\n\n1. Score each criterion (0-100)\n2. Calculate weighted average as overall score\n3. Identify all issues by severity\n4. Note any strengths\n5. Use your research tool to fact-check any market claims\n6. Provide specific recommendations for improvement\n\nRespond with ONLY the JSON object. No other text."
+      },
+      "id": "critic-agent",
+      "name": "Critic Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [940, 0]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.MODEL_CRITIC || 'openai/gpt-4o' }}",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 2048
+        }
+      },
+      "id": "critic-model",
+      "name": "GPT-4o (Critic)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [940, 220],
+      "credentials": {
+        "openRouterApi": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionId": "={{ $('Loop State Initializer').item.json.project_id + '_critic' }}",
+        "maxMessages": 6
+      },
+      "id": "critic-memory",
+      "name": "Critic Memory",
+      "type": "n8n-nodes-zep-memory-v3.zepMemoryV3",
+      "typeVersion": 8,
+      "position": [940, 420],
+      "credentials": {
+        "zepApi": {
+          "id": "zep-api",
+          "name": "Zep Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - Perplexity Research Tool"
+        },
+        "name": "perplexity_research",
+        "description": "Research tool for fact-checking market claims, validating statistics, and finding competitive information. Use for queries like 'market size for X', 'competitors in Y space', 'verify claim about Z'."
+      },
+      "id": "critic-tool-perplexity",
+      "name": "Perplexity Research Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.2,
+      "position": [1080, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Critic Response and extract score\n\nconst prevState = $('Draft State Updater').item.json;\nconst agentResponse = $input.first().json;\n\nconst responseText = agentResponse.output || agentResponse.text || '';\n\n// Multi-strategy JSON parsing\nlet evaluation = null;\nlet score = 0;\nlet parseMethod = 'unknown';\n\n// Strategy 1: Direct JSON parse\ntry {\n  evaluation = JSON.parse(responseText);\n  parseMethod = 'direct';\n} catch (e) {\n  // Strategy 2: Extract from markdown code block\n  const jsonMatch = responseText.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (jsonMatch) {\n    try {\n      evaluation = JSON.parse(jsonMatch[1].trim());\n      parseMethod = 'code_block';\n    } catch (e2) {\n      // Continue to next strategy\n    }\n  }\n  \n  // Strategy 3: Find JSON object in text\n  if (!evaluation) {\n    const objMatch = responseText.match(/\\{[\\s\\S]*\"score\"[\\s\\S]*\\}/);\n    if (objMatch) {\n      try {\n        evaluation = JSON.parse(objMatch[0]);\n        parseMethod = 'regex_extract';\n      } catch (e3) {\n        // Continue to next strategy\n      }\n    }\n  }\n  \n  // Strategy 4: Extract score from text patterns\n  if (!evaluation) {\n    const scorePatterns = [\n      /\"score\"\\s*:\\s*([0-9.]+)/i,\n      /score\\s*:\\s*([0-9.]+)/i,\n      /overall\\s*:\\s*([0-9.]+)/i,\n      /([0-9.]+)\\s*\\/\\s*100/\n    ];\n    \n    for (const pattern of scorePatterns) {\n      const match = responseText.match(pattern);\n      if (match) {\n        score = parseFloat(match[1]);\n        evaluation = {\n          score: score,\n          issues: [],\n          strengths: [],\n          recommendations: [],\n          raw_response: responseText\n        };\n        parseMethod = 'text_pattern';\n        break;\n      }\n    }\n  }\n}\n\n// Extract score if evaluation found\nif (evaluation && evaluation.score !== undefined) {\n  score = parseFloat(evaluation.score);\n}\n\n// Validate and clamp score\nif (isNaN(score)) score = 50; // Default to middle\nscore = Math.max(0, Math.min(100, score));\n\n// Extract issues for history\nconst issues = evaluation?.issues || [];\nconst criticalIssues = issues.filter(i => i.severity === 'critical');\nconst majorIssues = issues.filter(i => i.severity === 'major');\n\n// Record in iteration history\nconst historyEntry = {\n  iteration: prevState.iteration,\n  action: 'critic',\n  agent: 'Critic (GPT-4o)',\n  timestamp: new Date().toISOString(),\n  score,\n  issues_count: issues.length,\n  critical_count: criticalIssues.length,\n  major_count: majorIssues.length,\n  parse_method: parseMethod,\n  filename: `Vision_critique_v${prevState.iteration}.json`\n};\n\nreturn {\n  json: {\n    ...prevState,\n    score,\n    feedback: responseText,\n    evaluation,\n    issues,\n    last_action: 'critic',\n    iteration_history: [\n      ...(prevState.iteration_history || []),\n      historyEntry\n    ],\n    status: 'evaluated'\n  }\n};"
+      },
+      "id": "critic-parser",
+      "name": "Critic Response Parser",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1180, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "score-check",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": "={{ $json.score_threshold }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "quality-gate",
+      "name": "Quality Threshold Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1420, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Success! Score meets threshold\n\nconst state = $input.first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(state.start_time);\nconst durationMs = endTime - startTime;\nconst durationFormatted = `${Math.floor(durationMs / 60000)}m ${Math.floor((durationMs % 60000) / 1000)}s`;\n\nreturn {\n  json: {\n    project_id: state.project_id,\n    session_id: state.session_id,\n    loop_id: state.loop_id,\n    phase: state.phase,\n    status: 'success',\n    final_draft: state.draft,\n    final_score: state.score,\n    total_iterations: state.iteration,\n    convergence_achieved: true,\n    telemetry: {\n      start_time: state.start_time,\n      end_time: endTime.toISOString(),\n      duration_ms: durationMs,\n      duration_formatted: durationFormatted,\n      iteration_history: state.iteration_history,\n      final_evaluation: state.evaluation\n    }\n  }\n};"
+      },
+      "id": "success-output",
+      "name": "Success Output Builder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, -100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "iteration-check",
+              "leftValue": "={{ $json.iteration }}",
+              "rightValue": "={{ $json.max_iterations }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "iteration-gate",
+      "name": "Iteration Limit Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1660, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store state in static data before Refiner Agent\n// This allows Refiner State Updater to access state after the AI Agent\n\nconst inputData = $input.first().json;\n\n// Store in static data for access after Refiner Agent\nconst staticData = $getWorkflowStaticData('global');\nstaticData.refinerInputState = inputData;\n\n// Pass through unchanged\nreturn { json: inputData };"
+      },
+      "id": "store-state-before-refiner",
+      "name": "Store State Before Refiner",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 250]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Max iterations reached - prepare for human escalation\n\nconst state = $input.first().json;\n\n// Extract persistent issues\nconst issues = state.issues || [];\nconst criticalIssues = issues.filter(i => i.severity === 'critical');\nconst majorIssues = issues.filter(i => i.severity === 'major');\n\nconst issuesSummary = [\n  ...criticalIssues.map(i => `[CRITICAL] ${i.detail || i.criterion}`),\n  ...majorIssues.map(i => `[MAJOR] ${i.detail || i.criterion}`)\n].join('\\n');\n\nconst escalationMessage = `The Vision document has gone through ${state.max_iterations} iterations but hasn't reached the quality threshold.\n\n**Current Score**: ${state.score}/100 (threshold: ${state.score_threshold})\n\n**Persistent Issues**:\n${issuesSummary || 'See detailed evaluation for issues'}\n\n**Options**:\n1. Accept current version (score: ${state.score})\n2. Provide guidance on specific issues\n3. Lower quality threshold\n4. Start over with different approach`;\n\nconst webhookSuffix = `circuit_breaker_${state.loop_id}`;\n\nreturn {\n  json: {\n    ...state,\n    escalation_message: escalationMessage,\n    webhook_suffix: webhookSuffix,\n    status: 'awaiting_human_guidance'\n  }\n};"
+      },
+      "id": "circuit-breaker-prep",
+      "name": "Circuit Breaker Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1900, 0]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {
+          "webhookSuffix": "={{ $json.webhook_suffix }}"
+        }
+      },
+      "id": "wait-for-human",
+      "name": "Wait for Human Guidance",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2120, 0],
+      "webhookId": "vision-circuit-breaker"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process human response to circuit breaker\n\nconst prevState = $('Circuit Breaker Prep').item.json;\nconst webhookData = $input.first().json;\n\n// Parse user response\n// Expected: { \"action\": \"accept|guidance|lower_threshold|restart\", \"value\": \"...\" }\nconst userAction = webhookData.body?.action || webhookData.action || 'accept';\nconst userValue = webhookData.body?.value || webhookData.value || '';\n\nlet result = {\n  ...prevState,\n  human_action: userAction,\n  human_value: userValue\n};\n\nswitch (userAction) {\n  case 'accept':\n    result.status = 'accepted_by_human';\n    result.final_draft = prevState.draft;\n    result.final_score = prevState.score;\n    break;\n    \n  case 'guidance':\n    result.status = 'guidance_received';\n    result.additional_context = userValue;\n    result.continue_loop = true;\n    break;\n    \n  case 'lower_threshold':\n    const newThreshold = parseInt(userValue) || prevState.score_threshold - 10;\n    result.score_threshold = Math.max(50, newThreshold);\n    result.status = 'threshold_lowered';\n    result.continue_loop = true;\n    break;\n    \n  case 'restart':\n    result.status = 'restart_requested';\n    result.iteration = 0;\n    result.draft = '';\n    result.feedback = '';\n    result.iteration_history = [];\n    result.continue_loop = true;\n    break;\n    \n  default:\n    result.status = 'accepted_by_human';\n    result.final_draft = prevState.draft;\n    result.final_score = prevState.score;\n}\n\nreturn { json: result };"
+      },
+      "id": "process-human-response",
+      "name": "Process Human Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2340, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "continue-loop",
+              "leftValue": "={{ $json.continue_loop }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-continue",
+      "name": "Continue Loop?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2560, 0]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "## Context\nYou are \"The Refiner\" - a skilled editor who takes good work and makes it great by addressing specific feedback while preserving the original vision.\n\n## Objective\nImprove the Product Vision document based on the Critic's feedback.\nAddress each issue systematically while maintaining document coherence.\n\nThink step-by-step:\n1. Review the original draft\n2. Review the critic's feedback carefully\n3. Prioritize critical issues first, then major, then minor\n4. Make surgical improvements (don't rewrite everything unnecessarily)\n5. Preserve what works well (the strengths noted by the critic)\n6. Ensure the document remains cohesive and well-structured\n\n## Style\nIterative improvement. Make targeted changes where needed.\n\n## Tone\nCollaborative, solution-oriented.\n\n## Audience\nThe product team and the Critic who will re-evaluate.\n\n## Response Format\nReturn the COMPLETE improved document in Markdown format.\nDo NOT return just the changes - return the full document.\nDo NOT wrap in code blocks - output pure markdown."
+        },
+        "text": "=## Original Draft\n\n{{ $json.draft }}\n\n---\n\n## Critic's Feedback (Score: {{ $json.score }}/100)\n\n{{ $json.feedback }}\n\n---\n\n{{ $json.additional_context ? '## Additional Guidance from User\\n\\n' + $json.additional_context + '\\n\\n---\\n\\n' : '' }}\n\n## Your Task\nImprove this Product Vision document by addressing the critic's feedback.\n\n1. Address all critical issues first\n2. Then address major issues\n3. Preserve the strengths mentioned\n4. Ensure the document remains cohesive\n5. Return the COMPLETE improved document\n\nNow provide the improved Product Vision document:"
+      },
+      "id": "refiner-agent",
+      "name": "Refiner Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1660, 300]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.MODEL_REFINER || 'anthropic/claude-sonnet-3.5' }}",
+        "options": {
+          "temperature": 0.5,
+          "maxTokens": 4096
+        }
+      },
+      "id": "refiner-model",
+      "name": "Claude 3.5 Sonnet (Refiner)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [1660, 520],
+      "credentials": {
+        "openRouterApi": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionId": "={{ $('Loop State Initializer').item.json.project_id + '_refiner' }}",
+        "maxMessages": 10
+      },
+      "id": "refiner-memory",
+      "name": "Refiner Memory",
+      "type": "n8n-nodes-zep-memory-v3.zepMemoryV3",
+      "typeVersion": 8,
+      "position": [1660, 720],
+      "credentials": {
+        "zepApi": {
+          "id": "zep-api",
+          "name": "Zep Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "name": "access_knowledge_graph",
+        "description": "Access the Graphiti knowledge graph to retrieve project context and technical standards for maintaining consistency."
+      },
+      "id": "refiner-tool-graphiti",
+      "name": "Refiner Knowledge Graph Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.2,
+      "position": [1800, 720]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update state after Refiner improves draft\n// Use static data to access state from before the AI Agent\n\nconst staticData = $getWorkflowStaticData('global');\nconst prevState = staticData.refinerInputState || {};\nconst agentResponse = $input.first().json;\n\nconst refinedDraft = agentResponse.output || agentResponse.text || '';\n\n// Record in iteration history\nconst historyEntry = {\n  iteration: prevState.iteration,\n  action: 'refiner',\n  agent: 'Refiner (Claude 3.5 Sonnet)',\n  timestamp: new Date().toISOString(),\n  previous_score: prevState.score,\n  draft_length: refinedDraft.length,\n  changes_made: true,\n  filename: `Vision_refined_v${prevState.iteration}.md`\n};\n\nreturn {\n  json: {\n    ...prevState,\n    draft: refinedDraft,\n    last_action: 'refiner',\n    iteration_history: [\n      ...(prevState.iteration_history || []),\n      historyEntry\n    ],\n    status: 'refined'\n  }\n};"
+      },
+      "id": "refiner-state-updater",
+      "name": "Refiner State Updater",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Human accepted current version or loop is complete\n\nconst state = $input.first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(state.start_time);\nconst durationMs = endTime - startTime;\nconst durationFormatted = `${Math.floor(durationMs / 60000)}m ${Math.floor((durationMs % 60000) / 1000)}s`;\n\nreturn {\n  json: {\n    project_id: state.project_id,\n    session_id: state.session_id,\n    loop_id: state.loop_id,\n    phase: state.phase,\n    status: state.status || 'completed',\n    final_draft: state.final_draft || state.draft,\n    final_score: state.final_score || state.score,\n    total_iterations: state.iteration,\n    convergence_achieved: state.status === 'success',\n    human_intervention: state.human_action ? true : false,\n    human_action: state.human_action,\n    telemetry: {\n      start_time: state.start_time,\n      end_time: endTime.toISOString(),\n      duration_ms: durationMs,\n      duration_formatted: durationFormatted,\n      iteration_history: state.iteration_history,\n      final_evaluation: state.evaluation\n    }\n  }\n};"
+      },
+      "id": "human-accepted-output",
+      "name": "Human Accepted Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2780, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final Output - Return vision loop results to caller workflow\n// Aggregates data from both success and human-accepted paths\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    project_id: data.project_id,\n    session_id: data.session_id,\n    loop_id: data.loop_id,\n    phase: data.phase || 1,\n    status: data.status || 'completed',\n    final_draft: data.final_draft,\n    final_score: data.final_score,\n    total_iterations: data.total_iterations,\n    convergence_achieved: data.convergence_achieved || false,\n    human_intervention: data.human_intervention || false,\n    human_action: data.human_action || null,\n    telemetry: data.telemetry || {}\n  }\n};"
+      },
+      "id": "output-merge",
+      "name": "Subworkflow Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3000, 0]
+    }
+  ],
+  "connections": {
+    "Subworkflow Entry Point": {
+      "main": [
+        [
+          {
+            "node": "Loop State Initializer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop State Initializer": {
+      "main": [
+        [
+          {
+            "node": "Visionary Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude 3.5 Sonnet (Visionary)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Visionary Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Visionary Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Visionary Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Graph Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Visionary Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Visionary Agent": {
+      "main": [
+        [
+          {
+            "node": "Draft State Updater",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft State Updater": {
+      "main": [
+        [
+          {
+            "node": "Critic Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o (Critic)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Critic Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Critic Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity Research Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Critic Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic Agent": {
+      "main": [
+        [
+          {
+            "node": "Critic Response Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critic Response Parser": {
+      "main": [
+        [
+          {
+            "node": "Quality Threshold Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quality Threshold Gate": {
+      "main": [
+        [
+          {
+            "node": "Success Output Builder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Iteration Limit Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Output Builder": {
+      "main": [
+        [
+          {
+            "node": "Subworkflow Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Iteration Limit Gate": {
+      "main": [
+        [
+          {
+            "node": "Circuit Breaker Prep",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Store State Before Refiner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store State Before Refiner": {
+      "main": [
+        [
+          {
+            "node": "Refiner Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Circuit Breaker Prep": {
+      "main": [
+        [
+          {
+            "node": "Wait for Human Guidance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Human Guidance": {
+      "main": [
+        [
+          {
+            "node": "Process Human Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Human Response": {
+      "main": [
+        [
+          {
+            "node": "Continue Loop?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue Loop?": {
+      "main": [
+        [
+          {
+            "node": "Store State Before Refiner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Human Accepted Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude 3.5 Sonnet (Refiner)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Refiner Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Refiner Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner Knowledge Graph Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Refiner Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner Agent": {
+      "main": [
+        [
+          {
+            "node": "Refiner State Updater",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner State Updater": {
+      "main": [
+        [
+          {
+            "node": "Critic Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Human Accepted Output": {
+      "main": [
+        [
+          {
+            "node": "Subworkflow Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ai-product-factory"
+  },
+  "id": "ai-product-factory-vision-loop",
+  "tags": [
+    {
+      "id": "ai-product-factory",
+      "name": "AI Product Factory"
+    }
+  ]
+}

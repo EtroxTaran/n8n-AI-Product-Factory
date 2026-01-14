@@ -1,0 +1,908 @@
+{
+  "name": "AI Product Factory - Architecture Adversarial Loop",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "project_id",
+              "type": "string"
+            },
+            {
+              "name": "session_id",
+              "type": "string"
+            },
+            {
+              "name": "vision_document",
+              "type": "string"
+            },
+            {
+              "name": "tech_standards",
+              "type": "string"
+            },
+            {
+              "name": "context",
+              "type": "string"
+            },
+            {
+              "name": "max_iterations",
+              "type": "number"
+            },
+            {
+              "name": "score_threshold",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "subworkflow-entry",
+      "name": "Subworkflow Entry Point",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Architecture Loop - State Initializer\n// Initializes the adversarial loop state for ARC42 architecture\n\nconst input = $input.first().json;\n\n// Validate required fields\nif (!input.project_id) {\n  throw new Error('Missing required field: project_id');\n}\n\nif (!input.session_id) {\n  throw new Error('Missing required field: session_id');\n}\n\nif (!input.vision_document) {\n  throw new Error('Missing required field: vision_document');\n}\n\n// Parse config\nconst max_iterations = input.max_iterations || 5;\nconst score_threshold = input.score_threshold || 90;\n\n// Parse tech standards if string\nlet techStandards = [];\nif (input.tech_standards) {\n  if (typeof input.tech_standards === 'string') {\n    try {\n      techStandards = JSON.parse(input.tech_standards);\n    } catch (e) {\n      techStandards = [{ raw: input.tech_standards }];\n    }\n  } else {\n    techStandards = input.tech_standards;\n  }\n}\n\n// Generate unique loop session ID\nconst loop_id = 'arch_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);\n\n// Sanitize inputs to prevent injection\nconst sanitizeInput = (text) => {\n  if (!text) return '';\n  return text\n    .replace(/\\{\\{/g, '{ {')\n    .replace(/\\}\\}/g, '} }')\n    .replace(/\\$\\(/g, '$ (')\n    .replace(/`/g, \"'\")\n    .replace(/\\$\\{/g, '$ {')\n    .replace(/<script[^>]*>/gi, '')\n    .replace(/javascript:/gi, '')\n    .replace(/on\\w+\\s*=/gi, '')\n    .trim();\n};\n\nreturn {\n  json: {\n    project_id: input.project_id,\n    session_id: input.session_id,\n    loop_id,\n    phase: 2,\n    iteration: 0,\n    score: 0,\n    max_iterations,\n    score_threshold,\n    vision_document: sanitizeInput(input.vision_document),\n    context: sanitizeInput(input.context || ''),\n    tech_standards: techStandards,\n    draft: '',\n    feedback: '',\n    risks: [],\n    fixes: [],\n    iteration_history: [],\n    start_time: new Date().toISOString(),\n    status: 'initializing'\n  }\n};"
+      },
+      "id": "state-initializer",
+      "name": "Loop State Initializer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "search_facts",
+            "query": "approved technology stack database framework language cloud",
+            "group_ids": "={{ '[\"global_standards\", \"' + $json.project_id + '\"]' }}"
+          }
+        }
+      },
+      "id": "load-tech-stack",
+      "name": "Load Tech Stack from Graphiti",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge loaded tech stack with provided standards\n\nconst state = $('Loop State Initializer').item.json;\nconst graphitiResult = $input.first().json;\n\n// Extract tech stack from Graphiti results\nlet loadedTechStack = [];\nif (graphitiResult.result && Array.isArray(graphitiResult.result)) {\n  loadedTechStack = graphitiResult.result;\n} else if (graphitiResult.result && typeof graphitiResult.result === 'string') {\n  try {\n    const parsed = JSON.parse(graphitiResult.result);\n    loadedTechStack = Array.isArray(parsed) ? parsed : [parsed];\n  } catch (e) {\n    loadedTechStack = [{ content: graphitiResult.result }];\n  }\n}\n\n// Merge with provided standards (dedup by name)\nconst allStandards = [...state.tech_standards];\nconst existingNames = new Set(allStandards.map(s => (s.name || '').toLowerCase()));\n\nloadedTechStack.forEach(std => {\n  const name = (std.name || std.content || '').toLowerCase();\n  if (name && !existingNames.has(name)) {\n    allStandards.push(std);\n    existingNames.add(name);\n  }\n});\n\nreturn {\n  json: {\n    ...state,\n    tech_standards: allStandards,\n    tech_stack_loaded: true,\n    tech_stack_count: allStandards.length,\n    status: 'tech_stack_loaded'\n  }\n};"
+      },
+      "id": "merge-tech-stack",
+      "name": "Merge Tech Stack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "## Context\nYou are \"The Architect\" - a seasoned systems architect who designs scalable, maintainable, and robust software architectures following the ARC42 template.\n\n## Objective\nCreate a comprehensive Architecture document following ARC42 structure:\n1. Introduction and Goals\n2. Constraints\n3. Context and Scope\n4. Solution Strategy\n5. Building Block View\n6. Runtime View\n7. Deployment View\n8. Cross-cutting Concepts\n9. Architecture Decisions\n10. Quality Requirements\n11. Risks and Technical Debt\n12. Glossary\n\n## STRICT CONSTRAINT - TECH STACK COMPLIANCE\nYou MUST respect the Tech Stack defined in the provided standards.\nDO NOT introduce new databases, frameworks, languages, or cloud services that are not in the approved list.\n\nIf you believe a different technology is absolutely needed:\n- Flag it as \"REQUIRES_APPROVAL\" in the Architecture Decisions section\n- Explain why the approved option is insufficient\n- Suggest the alternative with detailed justification\n\n## Style\nThink step-by-step. Reference the Product Vision for alignment.\nUse Mermaid syntax for all diagrams.\nBe specific and actionable.\n\n## Tone\nTechnical, precise, forward-thinking.\n\n## Audience\nDevelopment teams, DevOps, and technical stakeholders.\n\n## Response Format\nMarkdown document following ARC42 template with all 12 sections.\nDo NOT wrap in code blocks - output pure markdown.\nInclude Mermaid diagrams where appropriate."
+        },
+        "text": "=## Task\nCreate a comprehensive ARC42 Architecture document for this project.\n\n## Product Vision (Reference)\n{{ $json.vision_document }}\n\n## Approved Tech Stack (MUST COMPLY)\n{{ JSON.stringify($json.tech_standards, null, 2) }}\n\n## Additional Context\n{{ $json.context }}\n\n## Instructions\nThink step-by-step:\n1. Review the Product Vision to understand requirements\n2. Review the approved tech stack for constraints\n3. Design a scalable architecture using ONLY approved technologies\n4. Create detailed building block and runtime views\n5. Document all architecture decisions with rationale\n6. Identify risks and technical debt\n\nNow create the ARC42 Architecture document:"
+      },
+      "id": "architect-agent",
+      "name": "Architect Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [900, 0]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.MODEL_ARCHITECT || 'anthropic/claude-sonnet-3.5' }}",
+        "options": {
+          "temperature": 0.5,
+          "maxTokens": 8192
+        }
+      },
+      "id": "architect-model",
+      "name": "Claude 3.5 Sonnet (Architect)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [900, 220],
+      "credentials": {
+        "openRouterApi": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionId": "={{ $('Loop State Initializer').item.json.project_id + '_architect' }}",
+        "maxMessages": 10
+      },
+      "id": "architect-memory",
+      "name": "Architect Memory",
+      "type": "n8n-nodes-zep-memory-v3.zepMemoryV3",
+      "typeVersion": 8,
+      "position": [900, 420],
+      "credentials": {
+        "zepApi": {
+          "id": "zep-api",
+          "name": "Zep Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "name": "query_tech_stack",
+        "description": "Query the approved technology stack from the knowledge graph. Use this to verify what technologies are approved before making architecture decisions."
+      },
+      "id": "architect-tool-graphiti",
+      "name": "Tech Stack Query Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.2,
+      "position": [1040, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update state after Architect creates draft\n\nconst initState = $('Merge Tech Stack').item.json;\nconst agentResponse = $input.first().json;\n\nconst draft = agentResponse.output || agentResponse.text || '';\nconst newIteration = initState.iteration + 1;\n\n// Record in iteration history\nconst historyEntry = {\n  iteration: newIteration,\n  action: 'architect',\n  agent: 'Architect (Claude 3.5 Sonnet)',\n  timestamp: new Date().toISOString(),\n  draft_length: draft.length,\n  draft_preview: draft.substring(0, 200) + '...',\n  filename: `Architecture_v${newIteration}.md`\n};\n\nreturn {\n  json: {\n    ...initState,\n    iteration: newIteration,\n    draft,\n    last_action: 'architect',\n    iteration_history: [\n      ...(initState.iteration_history || []),\n      historyEntry\n    ],\n    status: 'draft_created'\n  }\n};"
+      },
+      "id": "draft-state-updater",
+      "name": "Draft State Updater",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 0]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "## Context\nYou are \"Dr. Doom\" - a battle-scarred architect who has seen every type of system failure and knows exactly where things break under pressure.\n\n## Objective\nPerform a Pre-Mortem Analysis on the Architecture document.\nImagine it's 1 year from now and the system has CATASTROPHICALLY failed.\nYour job is to work backwards and identify what caused the failure.\n\nThink step-by-step:\n1. Identify single points of failure\n2. Find scalability bottlenecks\n3. Spot security vulnerabilities (OWASP Top 10)\n4. Check for operational blind spots\n5. Verify tech stack compliance with approved standards\n6. Assess deployment and rollback risks\n7. Evaluate data consistency and recovery risks\n8. Check for integration failures and cascading failures\n\n## Style\nPessimistic but precise. Every risk must be actionable.\nFor each risk, identify if it requires research for mitigation.\n\n## Tone\nGrave, urgent, no-nonsense.\n\n## Audience\nArchitects and engineers who need to know what could go wrong.\n\n## Response Format\nYou MUST respond with ONLY valid JSON. No markdown, no explanation:\n{\n  \"score\": <0-100>,\n  \"doom_scenarios\": [\n    {\n      \"scenario\": \"What catastrophically failed\",\n      \"root_cause\": \"Why it happened\",\n      \"affected_components\": [\"list of affected parts\"],\n      \"severity\": \"catastrophic|critical|major|minor\",\n      \"likelihood\": \"high|medium|low\",\n      \"requires_research\": true|false,\n      \"mitigation_hint\": \"Brief idea for fix\"\n    }\n  ],\n  \"tech_stack_violations\": [\n    {\"component\": \"...\", \"violation\": \"...\", \"approved_alternative\": \"...\"}\n  ],\n  \"security_concerns\": [\n    {\"issue\": \"...\", \"owasp_category\": \"...\", \"severity\": \"...\"}\n  ],\n  \"scalability_risks\": [...],\n  \"operational_blindspots\": [...],\n  \"strengths\": [...],\n  \"recommendations\": [...]\n}"
+        },
+        "text": "=## Architecture Document to Evaluate\n\n{{ $json.draft }}\n\n---\n\n## Approved Tech Stack (for compliance checking)\n{{ JSON.stringify($json.tech_standards, null, 2) }}\n\n---\n\n## Your Task\nPerform a Pre-Mortem Analysis on this Architecture document.\n\n1. Imagine the system failed catastrophically 1 year from now\n2. Identify what caused the failure (doom scenarios)\n3. Check for tech stack compliance violations\n4. Flag security vulnerabilities\n5. Identify scalability risks\n6. Score the overall architecture quality (0-100)\n7. Mark risks that need research for mitigation\n\nRespond with ONLY the JSON object. No other text."
+      },
+      "id": "validator-agent",
+      "name": "Dr. Doom Validator Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1380, 0]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.MODEL_CRITIC || 'openai/gpt-4o' }}",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 4096
+        }
+      },
+      "id": "validator-model",
+      "name": "GPT-4o (Dr. Doom)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [1380, 220],
+      "credentials": {
+        "openRouterApi": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Dr. Doom's response and extract risks\n\nconst prevState = $('Draft State Updater').item.json;\nconst agentResponse = $input.first().json;\n\nconst responseText = agentResponse.output || agentResponse.text || '';\n\n// Multi-strategy JSON parsing\nlet evaluation = null;\nlet score = 0;\nlet parseMethod = 'unknown';\n\n// Strategy 1: Direct JSON parse\ntry {\n  evaluation = JSON.parse(responseText);\n  parseMethod = 'direct';\n} catch (e) {\n  // Strategy 2: Extract from markdown code block\n  const jsonMatch = responseText.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (jsonMatch) {\n    try {\n      evaluation = JSON.parse(jsonMatch[1].trim());\n      parseMethod = 'code_block';\n    } catch (e2) {\n      // Continue\n    }\n  }\n  \n  // Strategy 3: Find JSON object in text\n  if (!evaluation) {\n    const objMatch = responseText.match(/\\{[\\s\\S]*\"score\"[\\s\\S]*\\}/);\n    if (objMatch) {\n      try {\n        evaluation = JSON.parse(objMatch[0]);\n        parseMethod = 'regex_extract';\n      } catch (e3) {\n        // Continue\n      }\n    }\n  }\n  \n  // Strategy 4: Default structure\n  if (!evaluation) {\n    const scoreMatch = responseText.match(/score[\"\\s:]+([0-9.]+)/i);\n    score = scoreMatch ? parseFloat(scoreMatch[1]) : 50;\n    evaluation = {\n      score: score,\n      doom_scenarios: [],\n      tech_stack_violations: [],\n      security_concerns: [],\n      recommendations: [],\n      raw_response: responseText\n    };\n    parseMethod = 'text_pattern';\n  }\n}\n\n// Extract score\nif (evaluation && evaluation.score !== undefined) {\n  score = parseFloat(evaluation.score);\n}\n\n// Validate and clamp score\nif (isNaN(score)) score = 50;\nscore = Math.max(0, Math.min(100, score));\n\n// Extract risks that need research\nconst doomScenarios = evaluation.doom_scenarios || [];\nconst risksNeedingResearch = doomScenarios.filter(r => r.requires_research === true);\n\n// Count issues by severity\nconst catastrophicCount = doomScenarios.filter(r => r.severity === 'catastrophic').length;\nconst criticalCount = doomScenarios.filter(r => r.severity === 'critical').length;\nconst techViolations = evaluation.tech_stack_violations || [];\n\n// Record in iteration history\nconst historyEntry = {\n  iteration: prevState.iteration,\n  action: 'validator',\n  agent: 'Dr. Doom (GPT-4o)',\n  timestamp: new Date().toISOString(),\n  score,\n  doom_scenarios_count: doomScenarios.length,\n  catastrophic_count: catastrophicCount,\n  critical_count: criticalCount,\n  tech_violations_count: techViolations.length,\n  risks_needing_research: risksNeedingResearch.length,\n  parse_method: parseMethod,\n  filename: `Architecture_risks_v${prevState.iteration}.json`\n};\n\nreturn {\n  json: {\n    ...prevState,\n    score,\n    feedback: responseText,\n    evaluation,\n    risks: doomScenarios,\n    risks_needing_research: risksNeedingResearch,\n    tech_violations: techViolations,\n    security_concerns: evaluation.security_concerns || [],\n    last_action: 'validator',\n    iteration_history: [\n      ...(prevState.iteration_history || []),\n      historyEntry\n    ],\n    status: 'validated'\n  }\n};"
+      },
+      "id": "validator-parser",
+      "name": "Risk Parser",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1620, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-research-risks",
+              "leftValue": "={{ $json.risks_needing_research.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-research-needed",
+      "name": "Risks Need Research?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1860, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split risks for parallel research\n\nconst state = $input.first().json;\nconst risksToResearch = state.risks_needing_research || [];\n\n// Return each risk as a separate item\nreturn risksToResearch.map((risk, index) => ({\n  json: {\n    project_id: state.project_id,\n    session_id: state.session_id,\n    loop_id: state.loop_id,\n    risk_index: index,\n    total_risks: risksToResearch.length,\n    risk: risk,\n    parent_state: state\n  }\n}));"
+      },
+      "id": "split-risks",
+      "name": "Split Risks for Research",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2100, -100]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - Perplexity Research Tool"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ $json.risk.scenario + ': ' + $json.risk.root_cause }}",
+            "context": "={{ $json.risk.mitigation_hint || '' }}",
+            "research_type": "risk_mitigation"
+          }
+        }
+      },
+      "id": "fixer-research",
+      "name": "Fixer Research Agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2340, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate research results for all risks\n\nconst allItems = $input.all();\n\n// Get parent state from first item\nconst parentState = allItems[0].json.parent_state || {};\n\n// Collect all research results\nconst fixes = allItems.map((item, index) => {\n  const research = item.json;\n  const originalRisk = parentState.risks_needing_research?.[index] || {};\n  \n  return {\n    risk: originalRisk.scenario || `Risk ${index + 1}`,\n    root_cause: originalRisk.root_cause,\n    severity: originalRisk.severity,\n    research_response: research.response || '',\n    sources: research.sources || [],\n    recommended_approach: research.recommended_approach || '',\n    confidence: research.confidence\n  };\n});\n\nreturn {\n  json: {\n    ...parentState,\n    fixes,\n    research_completed: true,\n    fixes_count: fixes.length,\n    status: 'research_completed'\n  }\n};"
+      },
+      "id": "aggregate-fixes",
+      "name": "Aggregate Research Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2580, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No research needed - pass through state\n\nconst state = $input.first().json;\n\nreturn {\n  json: {\n    ...state,\n    fixes: [],\n    research_completed: false,\n    status: 'no_research_needed'\n  }\n};"
+      },
+      "id": "no-research-needed",
+      "name": "No Research Needed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2100, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store research state and pass through\n// This also stores state for the Refiner Agent to access later\n\nconst inputData = $input.first().json;\n\n// Store in static data for Refiner State Updater to access after AI Agent\nconst staticData = $getWorkflowStaticData('global');\nstaticData.refinerInputState = inputData;\n\n// Pass through unchanged\nreturn { json: inputData };"
+      },
+      "id": "merge-research",
+      "name": "Merge Research Paths",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2820, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "score-check",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": "={{ $json.score_threshold }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "quality-gate",
+      "name": "Quality Threshold Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3060, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Success! Score meets threshold\n\nconst state = $input.first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(state.start_time);\nconst durationMs = endTime - startTime;\nconst durationFormatted = `${Math.floor(durationMs / 60000)}m ${Math.floor((durationMs % 60000) / 1000)}s`;\n\nreturn {\n  json: {\n    project_id: state.project_id,\n    session_id: state.session_id,\n    loop_id: state.loop_id,\n    phase: state.phase,\n    status: 'success',\n    final_draft: state.draft,\n    final_score: state.score,\n    total_iterations: state.iteration,\n    convergence_achieved: true,\n    tech_violations_resolved: (state.tech_violations || []).length === 0,\n    fixes_applied: state.fixes || [],\n    telemetry: {\n      start_time: state.start_time,\n      end_time: endTime.toISOString(),\n      duration_ms: durationMs,\n      duration_formatted: durationFormatted,\n      iteration_history: state.iteration_history,\n      final_evaluation: state.evaluation\n    }\n  }\n};"
+      },
+      "id": "success-output",
+      "name": "Success Output Builder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3300, -100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "iteration-check",
+              "leftValue": "={{ $json.iteration }}",
+              "rightValue": "={{ $json.max_iterations }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "iteration-gate",
+      "name": "Iteration Limit Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3300, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Max iterations reached - prepare for human escalation\n\nconst state = $input.first().json;\n\n// Summarize remaining issues\nconst doomScenarios = state.risks || [];\nconst techViolations = state.tech_violations || [];\nconst securityConcerns = state.security_concerns || [];\n\nconst issuesSummary = [\n  ...doomScenarios.filter(r => r.severity === 'catastrophic' || r.severity === 'critical')\n    .map(r => `[${r.severity.toUpperCase()}] ${r.scenario}`),\n  ...techViolations.map(v => `[TECH VIOLATION] ${v.component}: ${v.violation}`),\n  ...securityConcerns.filter(s => s.severity === 'critical')\n    .map(s => `[SECURITY] ${s.issue}`)\n].join('\\n');\n\nconst escalationMessage = `The Architecture document has gone through ${state.max_iterations} iterations but hasn't reached the quality threshold.\n\n**Current Score**: ${state.score}/100 (threshold: ${state.score_threshold})\n\n**Remaining Critical Issues**:\n${issuesSummary || 'See detailed evaluation for issues'}\n\n**Options**:\n1. Accept current version (score: ${state.score})\n2. Provide guidance on specific issues\n3. Lower quality threshold\n4. Start over with different approach`;\n\nconst webhookSuffix = `arch_circuit_breaker_${state.loop_id}`;\n\nreturn {\n  json: {\n    ...state,\n    escalation_message: escalationMessage,\n    webhook_suffix: webhookSuffix,\n    status: 'awaiting_human_guidance'\n  }\n};"
+      },
+      "id": "circuit-breaker-prep",
+      "name": "Circuit Breaker Prep",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3540, 0]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {
+          "webhookSuffix": "={{ $json.webhook_suffix }}"
+        }
+      },
+      "id": "wait-for-human",
+      "name": "Wait for Human Guidance",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [3760, 0],
+      "webhookId": "arch-circuit-breaker"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process human response to circuit breaker\n\nconst prevState = $('Circuit Breaker Prep').item.json;\nconst webhookData = $input.first().json;\n\nconst userAction = webhookData.body?.action || webhookData.action || 'accept';\nconst userValue = webhookData.body?.value || webhookData.value || '';\n\nlet result = {\n  ...prevState,\n  human_action: userAction,\n  human_value: userValue\n};\n\nswitch (userAction) {\n  case 'accept':\n    result.status = 'accepted_by_human';\n    result.final_draft = prevState.draft;\n    result.final_score = prevState.score;\n    break;\n    \n  case 'guidance':\n    result.status = 'guidance_received';\n    result.additional_context = userValue;\n    result.continue_loop = true;\n    break;\n    \n  case 'lower_threshold':\n    const newThreshold = parseInt(userValue) || prevState.score_threshold - 10;\n    result.score_threshold = Math.max(50, newThreshold);\n    result.status = 'threshold_lowered';\n    result.continue_loop = true;\n    break;\n    \n  case 'restart':\n    result.status = 'restart_requested';\n    result.iteration = 0;\n    result.draft = '';\n    result.feedback = '';\n    result.iteration_history = [];\n    result.continue_loop = true;\n    break;\n    \n  default:\n    result.status = 'accepted_by_human';\n    result.final_draft = prevState.draft;\n    result.final_score = prevState.score;\n}\n\nreturn { json: result };"
+      },
+      "id": "process-human-response",
+      "name": "Process Human Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3980, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "continue-loop",
+              "leftValue": "={{ $json.continue_loop }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-continue",
+      "name": "Continue Loop?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4200, 0]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "## Context\nYou are \"The Refiner\" - a skilled architect who takes good architecture designs and makes them great by addressing specific feedback while preserving the overall structure.\n\n## Objective\nImprove the Architecture document based on Dr. Doom's risk analysis and the Fixer's research.\nAddress each risk systematically while maintaining architectural coherence.\n\nThink step-by-step:\n1. Review the original architecture\n2. Review Dr. Doom's risk analysis\n3. Review the Fixer's researched solutions\n4. Prioritize catastrophic/critical risks first\n5. Apply mitigations without over-engineering\n6. Fix any tech stack violations\n7. Address security concerns\n8. Preserve what works well\n\n## STRICT CONSTRAINT - TECH STACK COMPLIANCE\nYou MUST only use technologies from the approved tech stack.\nIf a fix requires non-approved technology, flag it as REQUIRES_APPROVAL.\n\n## Style\nIterative improvement. Make targeted changes where needed.\n\n## Tone\nTechnical, solution-oriented.\n\n## Response Format\nReturn the COMPLETE improved document in Markdown format.\nDo NOT return just the changes - return the full document.\nDo NOT wrap in code blocks - output pure markdown."
+        },
+        "text": "=## Original Architecture\n\n{{ $json.draft }}\n\n---\n\n## Dr. Doom's Risk Analysis (Score: {{ $json.score }}/100)\n\n{{ $json.feedback }}\n\n---\n\n## Fixer's Research Results\n\n{{ JSON.stringify($json.fixes, null, 2) }}\n\n---\n\n## Approved Tech Stack (MUST COMPLY)\n{{ JSON.stringify($json.tech_standards, null, 2) }}\n\n---\n\n{{ $json.additional_context ? '## Additional Guidance from User\\n\\n' + $json.additional_context + '\\n\\n---\\n\\n' : '' }}\n\n## Your Task\nImprove this Architecture document by:\n\n1. Addressing all catastrophic/critical doom scenarios\n2. Fixing tech stack violations\n3. Applying the Fixer's researched solutions\n4. Resolving security concerns\n5. Keeping the document coherent\n\nNow provide the improved Architecture document:"
+      },
+      "id": "refiner-agent",
+      "name": "Refiner Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [3300, 300]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.MODEL_REFINER || 'anthropic/claude-sonnet-3.5' }}",
+        "options": {
+          "temperature": 0.5,
+          "maxTokens": 8192
+        }
+      },
+      "id": "refiner-model",
+      "name": "Claude 3.5 Sonnet (Refiner)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [3300, 520],
+      "credentials": {
+        "openRouterApi": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionId": "={{ $('Loop State Initializer').item.json.project_id + '_arch_refiner' }}",
+        "maxMessages": 10
+      },
+      "id": "refiner-memory",
+      "name": "Refiner Memory",
+      "type": "n8n-nodes-zep-memory-v3.zepMemoryV3",
+      "typeVersion": 8,
+      "position": [3300, 720],
+      "credentials": {
+        "zepApi": {
+          "id": "zep-api",
+          "name": "Zep Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "name": "access_knowledge_graph",
+        "description": "Access the Graphiti knowledge graph to retrieve tech standards and architectural patterns for maintaining consistency."
+      },
+      "id": "refiner-tool-graphiti",
+      "name": "Refiner Knowledge Graph Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.2,
+      "position": [3440, 720]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update state after Refiner improves draft\n// Use static data to access state from before the AI Agent\n\nconst staticData = $getWorkflowStaticData('global');\nconst prevState = staticData.refinerInputState || {};\nconst agentResponse = $input.first().json;\n\nconst refinedDraft = agentResponse.output || agentResponse.text || '';\n\n// Record in iteration history\nconst historyEntry = {\n  iteration: prevState.iteration,\n  action: 'refiner',\n  agent: 'Refiner (Claude 3.5 Sonnet)',\n  timestamp: new Date().toISOString(),\n  previous_score: prevState.score,\n  draft_length: refinedDraft.length,\n  fixes_applied: prevState.fixes?.length || 0,\n  changes_made: true,\n  filename: `Architecture_refined_v${prevState.iteration}.md`\n};\n\nreturn {\n  json: {\n    ...prevState,\n    draft: refinedDraft,\n    last_action: 'refiner',\n    iteration_history: [\n      ...(prevState.iteration_history || []),\n      historyEntry\n    ],\n    status: 'refined'\n  }\n};"
+      },
+      "id": "refiner-state-updater",
+      "name": "Refiner State Updater",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3540, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Human accepted current version or loop is complete\n\nconst state = $input.first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(state.start_time);\nconst durationMs = endTime - startTime;\nconst durationFormatted = `${Math.floor(durationMs / 60000)}m ${Math.floor((durationMs % 60000) / 1000)}s`;\n\nreturn {\n  json: {\n    project_id: state.project_id,\n    session_id: state.session_id,\n    loop_id: state.loop_id,\n    phase: state.phase,\n    status: state.status || 'completed',\n    final_draft: state.final_draft || state.draft,\n    final_score: state.final_score || state.score,\n    total_iterations: state.iteration,\n    convergence_achieved: state.status === 'success',\n    human_intervention: state.human_action ? true : false,\n    human_action: state.human_action,\n    fixes_applied: state.fixes || [],\n    telemetry: {\n      start_time: state.start_time,\n      end_time: endTime.toISOString(),\n      duration_ms: durationMs,\n      duration_formatted: durationFormatted,\n      iteration_history: state.iteration_history,\n      final_evaluation: state.evaluation\n    }\n  }\n};"
+      },
+      "id": "human-accepted-output",
+      "name": "Human Accepted Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4420, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final Output - Return architecture loop results to caller workflow\n// Aggregates data from both success and human-accepted paths\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    project_id: data.project_id,\n    session_id: data.session_id,\n    loop_id: data.loop_id,\n    phase: data.phase || 2,\n    status: data.status || 'completed',\n    final_draft: data.final_draft,\n    final_score: data.final_score,\n    total_iterations: data.total_iterations,\n    convergence_achieved: data.convergence_achieved || false,\n    tech_violations_resolved: data.tech_violations_resolved || false,\n    human_intervention: data.human_intervention || false,\n    human_action: data.human_action || null,\n    fixes_applied: data.fixes_applied || [],\n    telemetry: data.telemetry || {}\n  }\n};"
+      },
+      "id": "output-merge",
+      "name": "Subworkflow Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4640, 0]
+    }
+  ],
+  "connections": {
+    "Subworkflow Entry Point": {
+      "main": [
+        [
+          {
+            "node": "Loop State Initializer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop State Initializer": {
+      "main": [
+        [
+          {
+            "node": "Load Tech Stack from Graphiti",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Tech Stack from Graphiti": {
+      "main": [
+        [
+          {
+            "node": "Merge Tech Stack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Tech Stack": {
+      "main": [
+        [
+          {
+            "node": "Architect Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude 3.5 Sonnet (Architect)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Architect Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Architect Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Architect Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tech Stack Query Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Architect Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Architect Agent": {
+      "main": [
+        [
+          {
+            "node": "Draft State Updater",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft State Updater": {
+      "main": [
+        [
+          {
+            "node": "Dr. Doom Validator Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o (Dr. Doom)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Dr. Doom Validator Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dr. Doom Validator Agent": {
+      "main": [
+        [
+          {
+            "node": "Risk Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Risk Parser": {
+      "main": [
+        [
+          {
+            "node": "Risks Need Research?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Risks Need Research?": {
+      "main": [
+        [
+          {
+            "node": "Split Risks for Research",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Research Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Risks for Research": {
+      "main": [
+        [
+          {
+            "node": "Fixer Research Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fixer Research Agent": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Research Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Research Results": {
+      "main": [
+        [
+          {
+            "node": "Merge Research Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Research Needed": {
+      "main": [
+        [
+          {
+            "node": "Merge Research Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Research Paths": {
+      "main": [
+        [
+          {
+            "node": "Quality Threshold Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quality Threshold Gate": {
+      "main": [
+        [
+          {
+            "node": "Success Output Builder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Iteration Limit Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Output Builder": {
+      "main": [
+        [
+          {
+            "node": "Subworkflow Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Iteration Limit Gate": {
+      "main": [
+        [
+          {
+            "node": "Circuit Breaker Prep",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Refiner Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Circuit Breaker Prep": {
+      "main": [
+        [
+          {
+            "node": "Wait for Human Guidance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Human Guidance": {
+      "main": [
+        [
+          {
+            "node": "Process Human Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Human Response": {
+      "main": [
+        [
+          {
+            "node": "Continue Loop?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Continue Loop?": {
+      "main": [
+        [
+          {
+            "node": "Refiner Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Human Accepted Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude 3.5 Sonnet (Refiner)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Refiner Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Refiner Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner Knowledge Graph Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "Refiner Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner Agent": {
+      "main": [
+        [
+          {
+            "node": "Refiner State Updater",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refiner State Updater": {
+      "main": [
+        [
+          {
+            "node": "Dr. Doom Validator Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Human Accepted Output": {
+      "main": [
+        [
+          {
+            "node": "Subworkflow Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ai-product-factory"
+  },
+  "id": "ai-product-factory-architecture-loop",
+  "tags": [
+    {
+      "id": "ai-product-factory",
+      "name": "AI Product Factory"
+    }
+  ]
+}

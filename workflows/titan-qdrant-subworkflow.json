@@ -1,0 +1,739 @@
+{
+  "name": "Titan - Qdrant Operations",
+  "nodes": [
+    {
+      "name": "Subworkflow Entry Point",
+      "id": "trigger-1",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "operation",
+              "type": "string"
+            },
+            {
+              "name": "content",
+              "type": "string"
+            },
+            {
+              "name": "text",
+              "type": "string"
+            },
+            {
+              "name": "query",
+              "type": "string"
+            },
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "ids",
+              "type": "string"
+            },
+            {
+              "name": "scope",
+              "type": "string"
+            },
+            {
+              "name": "type",
+              "type": "string"
+            },
+            {
+              "name": "source",
+              "type": "string"
+            },
+            {
+              "name": "metadata",
+              "type": "string"
+            },
+            {
+              "name": "limit",
+              "type": "number"
+            },
+            {
+              "name": "score_threshold",
+              "type": "number"
+            },
+            {
+              "name": "with_vectors",
+              "type": "boolean"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Input Validator",
+      "id": "validate-input",
+      "typeVersion": 2,
+      "position": [
+        180,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nif (!input.operation) {\n  throw new Error('Missing required field: operation');\n}\n\nconst validOps = ['upsert', 'search', 'get', 'create_collection'];\nif (!validOps.includes(input.operation)) {\n  throw new Error(`Invalid operation: ${input.operation}. Valid: ${validOps.join(', ')}`);\n}\n\nswitch (input.operation) {\n  case 'upsert':\n    if (!input.content && !input.text) {\n      throw new Error('upsert requires \"content\" or \"text\" field');\n    }\n    break;\n  case 'search':\n    if (!input.query) {\n      throw new Error('search requires \"query\" field');\n    }\n    break;\n  case 'get':\n    if (!input.id && !input.ids) {\n      throw new Error('get requires \"id\" or \"ids\" field');\n    }\n    break;\n}\n\nconst requestId = `qdrant_${Date.now()}_${Math.random().toString(36).substring(7)}`;\n\nreturn {\n  json: {\n    ...input,\n    request_id: requestId,\n    timestamp: new Date().toISOString()\n  }\n};"
+      }
+    },
+    {
+      "name": "Operation Router",
+      "id": "switch-1",
+      "typeVersion": 3.4,
+      "position": [
+        380,
+        300
+      ],
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "upsert",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "upsert"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "search",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "search"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "get",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "get"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "create_collection",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "create_collection"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Upsert Embedding Generator",
+      "id": "generate-embedding",
+      "typeVersion": 4.3,
+      "position": [
+        600,
+        100
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OPENAI_API_URL || 'https://api.openai.com' }}/v1/embeddings",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": {{ JSON.stringify($json.content || $json.text || '') }}\n}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-api-header",
+          "name": "OpenAI API Header"
+        }
+      }
+    },
+    {
+      "name": "Upsert Vector Extractor",
+      "id": "extract-embedding",
+      "typeVersion": 2,
+      "position": [
+        820,
+        100
+      ],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const input = $input.first();\nconst originalData = $('Input Validator').first().json;\nconst embeddingResponse = input.json;\n\nif (embeddingResponse.statusCode >= 400 || embeddingResponse.error) {\n  return {\n    json: {\n      operation: 'upsert',\n      status: 'error',\n      request_id: originalData.request_id,\n      error: `Embedding API error: ${embeddingResponse.message || embeddingResponse.statusCode}`,\n      details: embeddingResponse\n    }\n  };\n}\n\nconst vector = embeddingResponse.data?.[0]?.embedding;\nif (!vector || !Array.isArray(vector)) {\n  return {\n    json: {\n      operation: 'upsert',\n      status: 'error',\n      request_id: originalData.request_id,\n      error: 'Invalid embedding response: no vector data',\n      details: embeddingResponse\n    }\n  };\n}\n\n// Validate vector dimensions match expected size for text-embedding-3-small\nconst EXPECTED_DIMENSIONS = 1536;\nif (vector.length !== EXPECTED_DIMENSIONS) {\n  return {\n    json: {\n      operation: 'upsert',\n      status: 'error',\n      request_id: originalData.request_id,\n      error: `Vector dimension mismatch: expected ${EXPECTED_DIMENSIONS}, got ${vector.length}`,\n      details: { expected: EXPECTED_DIMENSIONS, actual: vector.length }\n    }\n  };\n}\n\nconst generateUUID = () => {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {\n    const r = Math.random() * 16 | 0;\n    const v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n};\n\nlet id = originalData.id || originalData.document_id || generateUUID();\n\nreturn {\n  json: {\n    ...originalData,\n    vector: vector,\n    id: id,\n    tokens_used: embeddingResponse.usage?.total_tokens || 0\n  }\n};"
+      }
+    },
+    {
+      "name": "Vector Store Point Upserter",
+      "id": "http-upsert",
+      "typeVersion": 4.3,
+      "position": [
+        1040,
+        100
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ ($env.QDRANT_URL || 'http://qdrant:6333') + '/collections/titan_documents/points' }}",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={\n  \"points\": [\n    {\n      \"id\": {{ JSON.stringify($json.id) }},\n      \"vector\": {{ JSON.stringify($json.vector) }},\n      \"payload\": {\n        \"content\": {{ JSON.stringify($json.content || $json.text || '') }},\n        \"scope\": {{ JSON.stringify($json.scope || 'local') }},\n        \"type\": {{ JSON.stringify($json.type || 'document') }},\n        \"source\": {{ JSON.stringify($json.source || 'titan') }},\n        \"metadata\": {{ JSON.stringify($json.metadata || {}) }},\n        \"created_at\": {{ JSON.stringify(new Date().toISOString()) }}\n      }\n    }\n  ]\n}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
+          }
+        },
+        "authentication": "none",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "api-key",
+              "value": "={{ $env.QDRANT_API_KEY || '' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Search Embedding Generator",
+      "id": "generate-search-embedding",
+      "typeVersion": 4.3,
+      "position": [
+        600,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.OPENAI_API_URL || 'https://api.openai.com') + '/v1/embeddings' }}",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": {{ JSON.stringify($json.query || '') }}\n}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openai-api-header",
+          "name": "OpenAI API Header"
+        }
+      }
+    },
+    {
+      "name": "Search Vector Extractor",
+      "id": "extract-search-embedding",
+      "typeVersion": 2,
+      "position": [
+        820,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const input = $input.first();\nconst originalData = $('Input Validator').first().json;\nconst embeddingResponse = input.json;\n\nif (embeddingResponse.statusCode >= 400 || embeddingResponse.error) {\n  return {\n    json: {\n      operation: 'search',\n      status: 'error',\n      request_id: originalData.request_id,\n      query: originalData.query,\n      error: `Embedding API error: ${embeddingResponse.message || embeddingResponse.statusCode}`,\n      results: [],\n      count: 0\n    }\n  };\n}\n\nconst vector = embeddingResponse.data?.[0]?.embedding;\nif (!vector || !Array.isArray(vector)) {\n  return {\n    json: {\n      operation: 'search',\n      status: 'error',\n      request_id: originalData.request_id,\n      query: originalData.query,\n      error: 'Invalid embedding response for search',\n      results: [],\n      count: 0\n    }\n  };\n}\n\n// Validate vector dimensions match expected size for text-embedding-3-small\nconst EXPECTED_DIMENSIONS = 1536;\nif (vector.length !== EXPECTED_DIMENSIONS) {\n  return {\n    json: {\n      operation: 'search',\n      status: 'error',\n      request_id: originalData.request_id,\n      query: originalData.query,\n      error: `Vector dimension mismatch: expected ${EXPECTED_DIMENSIONS}, got ${vector.length}`,\n      results: [],\n      count: 0\n    }\n  };\n}\n\nreturn {\n  json: {\n    ...originalData,\n    query_vector: vector\n  }\n};"
+      }
+    },
+    {
+      "name": "Vector Store Similarity Search",
+      "id": "http-search",
+      "typeVersion": 4.3,
+      "position": [
+        1040,
+        300
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.QDRANT_URL || 'http://qdrant:6333') + '/collections/titan_documents/points/search' }}",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.query_vector) }},\n  \"limit\": {{ $json.limit || 10 }},\n  \"with_payload\": true,\n  \"with_vectors\": false,\n  \"score_threshold\": {{ $json.score_threshold || 0.7 }}\n}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
+          }
+        },
+        "authentication": "none",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "api-key",
+              "value": "={{ $env.QDRANT_API_KEY || '' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Vector Store Point Retriever",
+      "id": "http-get",
+      "typeVersion": 4.3,
+      "position": [
+        600,
+        500
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.QDRANT_URL || 'http://qdrant:6333') + '/collections/titan_documents/points' }}",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={\n  \"ids\": {{ JSON.stringify($json.ids || [$json.id]) }},\n  \"with_payload\": true,\n  \"with_vectors\": {{ $json.with_vectors || false }}\n}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
+          }
+        },
+        "authentication": "none",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "api-key",
+              "value": "={{ $env.QDRANT_API_KEY || '' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Collection Creator",
+      "id": "http-create-collection",
+      "typeVersion": 4.3,
+      "position": [
+        600,
+        700
+      ],
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ ($env.QDRANT_URL || 'http://qdrant:6333') + '/collections/titan_documents' }}",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "{\n  \"vectors\": {\n    \"size\": 1536,\n    \"distance\": \"Cosine\"\n  },\n  \"optimizers_config\": {\n    \"memmap_threshold\": 20000\n  },\n  \"replication_factor\": 1\n}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
+          }
+        },
+        "authentication": "none",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "api-key",
+              "value": "={{ $env.QDRANT_API_KEY || '' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Upsert Response Validator",
+      "id": "validate-upsert",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        100
+      ],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst originalData = $('Upsert Vector Extractor').first().json;\nconst validateInput = $('Input Validator').first().json;\n\nif (response.statusCode >= 400) {\n  return {\n    json: {\n      operation: 'upsert',\n      status: 'error',\n      request_id: validateInput.request_id,\n      id: originalData.id,\n      error: `Qdrant API error: ${response.message || response.statusCode}`,\n      details: response\n    }\n  };\n}\n\nreturn {\n  json: {\n    operation: 'upsert',\n    status: 'success',\n    request_id: validateInput.request_id,\n    id: originalData.id,\n    tokens_used: originalData.tokens_used,\n    response: response\n  }\n};"
+      }
+    },
+    {
+      "name": "Search Response Validator",
+      "id": "validate-search",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        300
+      ],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst originalData = $('Input Validator').first().json;\n\nif (response.statusCode >= 400 || (response.status && response.status === 'error')) {\n  return {\n    json: {\n      operation: 'search',\n      status: 'error',\n      request_id: originalData.request_id,\n      query: originalData.query,\n      error: response.message || response.error || 'Unknown error',\n      count: 0,\n      results: []\n    }\n  };\n}\n\nconst results = response.result || [];\n\nreturn {\n  json: {\n    operation: 'search',\n    status: 'success',\n    request_id: originalData.request_id,\n    query: originalData.query,\n    count: results.length,\n    results: results.map(r => ({\n      id: r.id,\n      score: r.score,\n      payload: r.payload\n    }))\n  }\n};"
+      }
+    },
+    {
+      "name": "Get Response Validator",
+      "id": "validate-get",
+      "typeVersion": 2,
+      "position": [
+        820,
+        500
+      ],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst originalData = $('Input Validator').first().json;\n\nif (response.statusCode >= 400 || (response.status && response.status === 'error')) {\n  return {\n    json: {\n      operation: 'get',\n      status: 'error',\n      request_id: originalData.request_id,\n      error: response.message || response.error || 'Unknown error',\n      count: 0,\n      points: []\n    }\n  };\n}\n\nconst points = response.result || [];\n\nreturn {\n  json: {\n    operation: 'get',\n    status: 'success',\n    request_id: originalData.request_id,\n    count: points.length,\n    points: points\n  }\n};"
+      }
+    },
+    {
+      "name": "Collection Create Response Validator",
+      "id": "validate-create",
+      "typeVersion": 2,
+      "position": [
+        820,
+        700
+      ],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst originalData = $('Input Validator').first().json;\n\nif (response.statusCode >= 400) {\n  const errorMessage = response.message || response.error || '';\n  if (errorMessage.includes('already exists')) {\n    return {\n      json: {\n        operation: 'create_collection',\n        status: 'success',\n        request_id: originalData.request_id,\n        message: 'Collection already exists',\n        response: response\n      }\n    };\n  }\n  return {\n    json: {\n      operation: 'create_collection',\n      status: 'error',\n      request_id: originalData.request_id,\n      error: `Qdrant API error: ${response.message || response.statusCode}`,\n      details: response\n    }\n  };\n}\n\nreturn {\n  json: {\n    operation: 'create_collection',\n    status: 'success',\n    request_id: originalData.request_id,\n    message: response.result === true ? 'Collection created' : 'Collection already exists or updated',\n    response: response\n  }\n};"
+      }
+    },
+    {
+      "name": "Output Aggregator",
+      "id": "output-merge",
+      "typeVersion": 3,
+      "position": [
+        1480,
+        400
+      ],
+      "type": "n8n-nodes-base.merge",
+      "parameters": {
+        "mode": "chooseBranch"
+      }
+    }
+  ],
+  "connections": {
+    "Collection Creator": {
+      "main": [
+        [
+          {
+            "node": "Collection Create Response Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Embedding Generator": {
+      "main": [
+        [
+          {
+            "node": "Search Vector Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vector Store Point Upserter": {
+      "main": [
+        [
+          {
+            "node": "Upsert Response Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Embedding Generator": {
+      "main": [
+        [
+          {
+            "node": "Upsert Vector Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vector Store Point Retriever": {
+      "main": [
+        [
+          {
+            "node": "Get Response Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collection Create Response Validator": {
+      "main": [
+        [
+          {
+            "node": "Output Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Response Validator": {
+      "main": [
+        [
+          {
+            "node": "Output Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operation Router": {
+      "main": [
+        [
+          {
+            "node": "Upsert Embedding Generator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search Embedding Generator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Vector Store Point Retriever",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Collection Creator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Response Validator": {
+      "main": [
+        [
+          {
+            "node": "Output Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Vector Extractor": {
+      "main": [
+        [
+          {
+            "node": "Vector Store Similarity Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Validator": {
+      "main": [
+        [
+          {
+            "node": "Operation Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vector Store Similarity Search": {
+      "main": [
+        [
+          {
+            "node": "Search Response Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Vector Extractor": {
+      "main": [
+        [
+          {
+            "node": "Vector Store Point Upserter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Response Validator": {
+      "main": [
+        [
+          {
+            "node": "Output Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subworkflow Entry Point": {
+      "main": [
+        [
+          {
+            "node": "Input Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Titan",
+      "createdAt": "2026-01-12T00:00:00.000Z",
+      "updatedAt": "2026-01-12T00:00:00.000Z"
+    },
+    {
+      "name": "SubWorkflow",
+      "createdAt": "2026-01-12T00:00:00.000Z",
+      "updatedAt": "2026-01-12T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2026-01-13T00:00:00.000Z",
+  "versionId": "2"
+}

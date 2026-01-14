@@ -1,0 +1,535 @@
+{
+  "name": "Titan - Graphiti Operations",
+  "nodes": [
+    {
+      "name": "Subworkflow Entry Point",
+      "id": "trigger-1",
+      "typeVersion": 1.1,
+      "position": [0, 300],
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "operation",
+              "type": "string"
+            },
+            {
+              "name": "content",
+              "type": "string"
+            },
+            {
+              "name": "text",
+              "type": "string"
+            },
+            {
+              "name": "query",
+              "type": "string"
+            },
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "source",
+              "type": "string"
+            },
+            {
+              "name": "source_description",
+              "type": "string"
+            },
+            {
+              "name": "group_id",
+              "type": "string"
+            },
+            {
+              "name": "group_ids",
+              "type": "string"
+            },
+            {
+              "name": "limit",
+              "type": "number"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Input Validator",
+      "id": "validate-input",
+      "typeVersion": 2,
+      "position": [180, 300],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "// Validate input and prepare request ID for tracing\nconst input = $input.first().json;\n\nif (!input.operation) {\n  throw new Error('Missing required field: operation');\n}\n\nconst validOps = ['add_episode', 'search_nodes', 'search_facts', 'create_collection'];\nif (!validOps.includes(input.operation)) {\n  throw new Error(`Invalid operation: ${input.operation}. Valid: ${validOps.join(', ')}`);\n}\n\nswitch (input.operation) {\n  case 'add_episode':\n    if (!input.content && !input.text) {\n      throw new Error('add_episode requires \"content\" or \"text\" field');\n    }\n    break;\n  case 'search_nodes':\n  case 'search_facts':\n    if (!input.query) {\n      throw new Error(`${input.operation} requires \"query\" field`);\n    }\n    break;\n  case 'create_collection':\n    if (!input.name) {\n      throw new Error('create_collection requires \"name\" field');\n    }\n    break;\n}\n\nconst requestId = `titan_${Date.now()}_${Math.random().toString(36).substring(7)}`;\n\nreturn {\n  json: {\n    ...input,\n    request_id: requestId,\n    timestamp: new Date().toISOString()\n  }\n};"
+      }
+    },
+    {
+      "name": "Operation Router",
+      "id": "switch-1",
+      "typeVersion": 3.4,
+      "position": [380, 300],
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "add_episode",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "add_episode"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "search_nodes",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "search_nodes"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "search_facts",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "search_facts"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "create_collection",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "create_collection"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Knowledge Graph Episode Ingestion",
+      "id": "http-add-episode",
+      "typeVersion": 4.3,
+      "position": [620, 100],
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.GRAPHITI_URL || 'http://graphiti:8000') + '/mcp/' }}",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={\n  \"jsonrpc\": \"2.0\",\n  \"id\": {{ JSON.stringify($json.request_id) }},\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"add_episode\",\n    \"arguments\": {\n      \"name\": {{ JSON.stringify($json.name || 'Episode') }},\n      \"episode_body\": {{ JSON.stringify($json.content || $json.text || '') }},\n      \"source\": {{ JSON.stringify($json.source || 'text') }},\n      \"source_description\": {{ JSON.stringify($json.source_description || 'Titan workflow ingestion') }},\n      \"group_id\": {{ JSON.stringify($json.group_id || 'titan') }}\n    }\n  }\n}",
+        "options": {
+          "timeout": 60000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
+          }
+        },
+        "authentication": "none",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $json.request_id }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Knowledge Graph Node Search",
+      "id": "http-search-nodes",
+      "typeVersion": 4.3,
+      "position": [620, 300],
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.GRAPHITI_URL || 'http://graphiti:8000') + '/mcp/' }}",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={\n  \"jsonrpc\": \"2.0\",\n  \"id\": {{ JSON.stringify($json.request_id) }},\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"search_nodes\",\n    \"arguments\": {\n      \"query\": {{ JSON.stringify($json.query || '') }},\n      \"group_ids\": {{ JSON.stringify($json.group_ids || ['titan']) }},\n      \"limit\": {{ $json.limit || 10 }}\n    }\n  }\n}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
+          }
+        },
+        "authentication": "none",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $json.request_id }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Knowledge Graph Fact Search",
+      "id": "http-search-facts",
+      "typeVersion": 4.3,
+      "position": [620, 500],
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.GRAPHITI_URL || 'http://graphiti:8000') + '/mcp/' }}",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={\n  \"jsonrpc\": \"2.0\",\n  \"id\": {{ JSON.stringify($json.request_id) }},\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"search_facts\",\n    \"arguments\": {\n      \"query\": {{ JSON.stringify($json.query || '') }},\n      \"group_ids\": {{ JSON.stringify($json.group_ids || ['titan']) }},\n      \"limit\": {{ $json.limit || 10 }}\n    }\n  }\n}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
+          }
+        },
+        "authentication": "none",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $json.request_id }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Episode Ingestion Response Validator",
+      "id": "validate-add-response",
+      "typeVersion": 2,
+      "position": [860, 100],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst originalData = $('Input Validator').first().json;\n\nif (response.error || response.statusCode >= 400) {\n  return {\n    json: {\n      operation: 'add_episode',\n      status: 'error',\n      request_id: originalData.request_id,\n      error: response.error?.message || response.message || 'HTTP error',\n      details: response\n    }\n  };\n}\n\nreturn {\n  json: {\n    operation: 'add_episode',\n    status: 'success',\n    request_id: originalData.request_id,\n    result: response.result,\n    episode_name: originalData.name,\n    group_id: originalData.group_id || 'titan'\n  }\n};"
+      }
+    },
+    {
+      "name": "Node Search Response Validator",
+      "id": "validate-nodes-response",
+      "typeVersion": 2,
+      "position": [860, 300],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst originalData = $('Input Validator').first().json;\n\nif (response.statusCode >= 400 || response.error) {\n  return {\n    json: {\n      operation: 'search_nodes',\n      status: 'error',\n      request_id: originalData.request_id,\n      query: originalData.query,\n      error: response.error?.message || response.message || 'HTTP error',\n      result: [],\n      count: 0\n    }\n  };\n}\n\nlet result = response.result;\nif (typeof result === 'string') {\n  try { result = JSON.parse(result).content || JSON.parse(result); } catch (e) { result = [{ content: result }]; }\n}\nif (!Array.isArray(result)) result = result ? [result] : [];\n\nreturn {\n  json: {\n    operation: 'search_nodes',\n    status: 'success',\n    request_id: originalData.request_id,\n    query: originalData.query,\n    result: result,\n    count: result.length\n  }\n};"
+      }
+    },
+    {
+      "name": "Fact Search Response Validator",
+      "id": "validate-facts-response",
+      "typeVersion": 2,
+      "position": [860, 500],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst originalData = $('Input Validator').first().json;\n\nif (response.statusCode >= 400 || response.error) {\n  return {\n    json: {\n      operation: 'search_facts',\n      status: 'error',\n      request_id: originalData.request_id,\n      query: originalData.query,\n      error: response.error?.message || response.message || 'HTTP error',\n      result: [],\n      count: 0\n    }\n  };\n}\n\nlet result = response.result;\nif (typeof result === 'string') {\n  try { result = JSON.parse(result).content || JSON.parse(result); } catch (e) { result = [{ content: result }]; }\n}\nif (!Array.isArray(result)) result = result ? [result] : [];\n\nreturn {\n  json: {\n    operation: 'search_facts',\n    status: 'success',\n    request_id: originalData.request_id,\n    query: originalData.query,\n    result: result,\n    count: result.length\n  }\n};"
+      }
+    },
+    {
+      "name": "Output Aggregator",
+      "id": "output-merge",
+      "typeVersion": 3,
+      "position": [1100, 300],
+      "type": "n8n-nodes-base.merge",
+      "parameters": {
+        "mode": "chooseBranch"
+      }
+    },
+    {
+      "name": "Knowledge Graph Collection Creator",
+      "id": "http-create-collection",
+      "typeVersion": 4.3,
+      "position": [620, 700],
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.GRAPHITI_URL || 'http://graphiti:8000') + '/mcp/' }}",
+        "specifyBody": "json",
+        "sendBody": true,
+        "sendHeaders": true,
+        "jsonBody": "={\n  \"jsonrpc\": \"2.0\",\n  \"id\": {{ JSON.stringify($json.request_id) }},\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"create_collection\",\n    \"arguments\": {\n      \"name\": {{ JSON.stringify($json.name || 'default') }},\n      \"description\": {{ JSON.stringify($json.description || '') }}\n    }\n  }\n}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
+          }
+        },
+        "authentication": "none",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $json.request_id }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Collection Creation Response Validator",
+      "id": "validate-create-response",
+      "typeVersion": 2,
+      "position": [860, 700],
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst originalData = $('Input Validator').first().json;\n\nif (response.statusCode >= 400 || response.error) {\n  const errorMessage = response.error?.message || response.message || 'HTTP error';\n  // Handle \"already exists\" as success\n  if (errorMessage.toLowerCase().includes('already exists')) {\n    return {\n      json: {\n        operation: 'create_collection',\n        status: 'success',\n        request_id: originalData.request_id,\n        message: 'Collection already exists',\n        collection_name: originalData.name\n      }\n    };\n  }\n  return {\n    json: {\n      operation: 'create_collection',\n      status: 'error',\n      request_id: originalData.request_id,\n      error: errorMessage,\n      details: response\n    }\n  };\n}\n\nreturn {\n  json: {\n    operation: 'create_collection',\n    status: 'success',\n    request_id: originalData.request_id,\n    message: response.result === true ? 'Collection created' : 'Collection operation completed',\n    collection_name: originalData.name,\n    result: response.result\n  }\n};"
+      }
+    }
+  ],
+  "connections": {
+    "Episode Ingestion Response Validator": {
+      "main": [
+        [
+          {
+            "node": "Output Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fact Search Response Validator": {
+      "main": [
+        [
+          {
+            "node": "Output Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operation Router": {
+      "main": [
+        [
+          {
+            "node": "Knowledge Graph Episode Ingestion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Knowledge Graph Node Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Knowledge Graph Fact Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Knowledge Graph Collection Creator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Graph Collection Creator": {
+      "main": [
+        [
+          {
+            "node": "Collection Creation Response Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collection Creation Response Validator": {
+      "main": [
+        [
+          {
+            "node": "Output Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Graph Node Search": {
+      "main": [
+        [
+          {
+            "node": "Node Search Response Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Graph Fact Search": {
+      "main": [
+        [
+          {
+            "node": "Fact Search Response Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Graph Episode Ingestion": {
+      "main": [
+        [
+          {
+            "node": "Episode Ingestion Response Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Node Search Response Validator": {
+      "main": [
+        [
+          {
+            "node": "Output Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Validator": {
+      "main": [
+        [
+          {
+            "node": "Operation Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subworkflow Entry Point": {
+      "main": [
+        [
+          {
+            "node": "Input Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Titan",
+      "createdAt": "2026-01-12T00:00:00.000Z",
+      "updatedAt": "2026-01-12T00:00:00.000Z"
+    },
+    {
+      "name": "SubWorkflow",
+      "createdAt": "2026-01-12T00:00:00.000Z",
+      "updatedAt": "2026-01-12T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2026-01-13T00:00:00.000Z",
+  "versionId": "2"
+}

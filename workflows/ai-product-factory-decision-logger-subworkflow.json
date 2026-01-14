@@ -1,0 +1,862 @@
+{
+  "name": "AI Product Factory - Decision Logger",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "operation",
+              "type": "string"
+            },
+            {
+              "name": "project_id",
+              "type": "string"
+            },
+            {
+              "name": "session_id",
+              "type": "string"
+            },
+            {
+              "name": "phase",
+              "type": "string"
+            },
+            {
+              "name": "entry_type",
+              "type": "string"
+            },
+            {
+              "name": "content",
+              "type": "string"
+            },
+            {
+              "name": "metadata",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "subworkflow-entry",
+      "name": "Subworkflow Entry Point",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Decision Logger - Input Validator\n// Validates incoming parameters and prepares logging context\n\nconst input = $input.first().json;\n\n// Validate required fields\nconst operation = input.operation;\nif (!operation) {\n  throw new Error('Missing required field: operation');\n}\n\nconst validOperations = ['log_decision', 'log_iteration', 'log_approval', 'log_phase_start', 'log_phase_end'];\nif (!validOperations.includes(operation)) {\n  throw new Error(`Invalid operation: ${operation}. Must be one of: ${validOperations.join(', ')}`);\n}\n\nconst project_id = input.project_id;\nif (!project_id) {\n  throw new Error('Missing required field: project_id');\n}\n\nconst session_id = input.session_id || 'unknown_session';\nconst phase = input.phase || 'unknown';\nconst entry_type = input.entry_type || operation;\nconst content = input.content || '';\n\n// Parse metadata if it's a string\nlet metadata = {};\nif (input.metadata) {\n  if (typeof input.metadata === 'string') {\n    try {\n      metadata = JSON.parse(input.metadata);\n    } catch (e) {\n      metadata = { raw: input.metadata };\n    }\n  } else {\n    metadata = input.metadata;\n  }\n}\n\n// Generate timestamp\nconst timestamp = new Date().toISOString();\nconst timestampFormatted = new Date().toLocaleString('en-US', {\n  year: 'numeric',\n  month: '2-digit',\n  day: '2-digit',\n  hour: '2-digit',\n  minute: '2-digit',\n  second: '2-digit',\n  hour12: false\n});\n\n// Generate request ID for tracing\nconst request_id = `log_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;\n\nreturn {\n  json: {\n    operation,\n    project_id,\n    session_id,\n    phase,\n    entry_type,\n    content,\n    metadata,\n    timestamp,\n    timestamp_formatted: timestampFormatted,\n    request_id,\n    folder_path: `AI_Product_Factory/${project_id}`,\n    decision_log_path: `AI_Product_Factory/${project_id}/decision_log.md`\n  }\n};"
+      },
+      "id": "validate-input",
+      "name": "Input Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "log_decision",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "log_decision"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "log_iteration",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "log_iteration"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "log_approval",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "log_approval"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "log_phase_start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "log_phase_start"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "log_phase_end",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "log_phase_end"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "operation-router",
+      "name": "Operation Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format Decision Log Entry\n// Creates a markdown entry for tech standard or key decision\n\nconst data = $input.first().json;\nconst metadata = data.metadata || {};\n\nlet entry = `\\n#### [${data.timestamp_formatted}] ${data.entry_type}\\n`;\n\n// Format based on entry type\nif (data.entry_type === 'tech_standard_discovery') {\n  entry += `- **Found**: ${metadata.name || 'Unknown'}\\n`;\n  entry += `- **Type**: ${metadata.type || 'unknown'}\\n`;\n  entry += `- **Source**: ${metadata.source || 'Unknown document'}\\n`;\n  entry += `- **Confidence**: ${metadata.confidence ? (metadata.confidence * 100).toFixed(0) + '%' : 'N/A'}\\n`;\n  if (metadata.description) {\n    entry += `- **Description**: ${metadata.description}\\n`;\n  }\n  entry += `- **User Decision**: ${metadata.user_decision || 'Pending'}\\n`;\n  if (metadata.stored_in) {\n    entry += `- **Stored In**: ${metadata.stored_in}\\n`;\n  }\n} else if (data.entry_type === 'architecture_decision') {\n  entry += `- **Decision**: ${metadata.decision || data.content}\\n`;\n  entry += `- **Rationale**: ${metadata.rationale || 'N/A'}\\n`;\n  entry += `- **Status**: ${metadata.status || 'recorded'}\\n`;\n  if (metadata.alternatives) {\n    entry += `- **Alternatives Considered**: ${metadata.alternatives}\\n`;\n  }\n} else {\n  // Generic decision format\n  entry += `- **Decision**: ${data.content}\\n`;\n  if (metadata.reason) {\n    entry += `- **Reason**: ${metadata.reason}\\n`;\n  }\n  if (metadata.approved_by) {\n    entry += `- **Approved By**: ${metadata.approved_by}\\n`;\n  }\n}\n\nentry += '\\n';\n\nreturn {\n  json: {\n    ...data,\n    formatted_entry: entry,\n    log_section: `Phase ${data.phase}: ${data.entry_type}`\n  }\n};"
+      },
+      "id": "format-decision",
+      "name": "Format Decision Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, -200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format Iteration Log Entry\n// Creates a markdown entry for adversarial loop iterations\n\nconst data = $input.first().json;\nconst metadata = data.metadata || {};\n\nlet entry = `\\n#### [${data.timestamp_formatted}] ${data.entry_type}\\n`;\n\n// Format iteration entry\nconst iteration = metadata.iteration || 'N/A';\nconst agent = metadata.agent || 'Unknown';\nconst score = metadata.score;\nconst action = metadata.action || 'processed';\n\nentry += `- **Iteration**: ${iteration}\\n`;\nentry += `- **Agent**: ${agent}\\n`;\n\nif (score !== undefined && score !== null) {\n  entry += `- **Score**: ${score}/100\\n`;\n}\n\nif (metadata.issues && Array.isArray(metadata.issues)) {\n  entry += `- **Key Issues**:\\n`;\n  metadata.issues.forEach(issue => {\n    const severity = issue.severity || 'unknown';\n    const detail = issue.detail || issue.criterion || issue;\n    entry += `  - ${detail} (${severity})\\n`;\n  });\n}\n\nif (metadata.strengths && Array.isArray(metadata.strengths)) {\n  entry += `- **Strengths**: ${metadata.strengths.join(', ')}\\n`;\n}\n\nentry += `- **Action**: ${action}\\n`;\n\nif (metadata.filename) {\n  entry += `- **Saved To**: ${metadata.filename}\\n`;\n}\n\nentry += '\\n';\n\nreturn {\n  json: {\n    ...data,\n    formatted_entry: entry,\n    log_section: `Phase ${data.phase}: Iteration ${iteration}`\n  }\n};"
+      },
+      "id": "format-iteration",
+      "name": "Format Iteration Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format Approval Log Entry\n// Creates a markdown entry for human approvals\n\nconst data = $input.first().json;\nconst metadata = data.metadata || {};\n\nlet entry = `\\n#### [${data.timestamp_formatted}] Human Approval\\n`;\n\nentry += `- **Item**: ${metadata.item || data.content}\\n`;\nentry += `- **Decision**: ${metadata.decision || 'Approved'}\\n`;\n\nif (metadata.scope) {\n  entry += `- **Scope**: ${metadata.scope}\\n`;\n}\n\nif (metadata.notes) {\n  entry += `- **Notes**: ${metadata.notes}\\n`;\n}\n\nif (metadata.webhook_response) {\n  entry += `- **Response Time**: ${metadata.response_time || 'N/A'}\\n`;\n}\n\nentry += '\\n';\n\nreturn {\n  json: {\n    ...data,\n    formatted_entry: entry,\n    log_section: `Phase ${data.phase}: Human Approval`\n  }\n};"
+      },
+      "id": "format-approval",
+      "name": "Format Approval Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format Phase Start Entry\n// Creates a markdown section header for phase start\n\nconst data = $input.first().json;\nconst metadata = data.metadata || {};\n\nconst phaseNames = {\n  '0': 'Context Scavenging',\n  '1': 'Product Vision Loop',\n  '2': 'Architecture Loop',\n  '3': 'Final Audit'\n};\n\nconst phaseName = phaseNames[data.phase] || `Phase ${data.phase}`;\n\nlet entry = `\\n---\\n\\n### Phase ${data.phase}: ${phaseName}\\n\\n`;\nentry += `**Started**: ${data.timestamp_formatted}\\n`;\n\nif (metadata.description) {\n  entry += `**Description**: ${metadata.description}\\n`;\n}\n\nif (metadata.config) {\n  entry += `**Configuration**:\\n`;\n  entry += `- Max Iterations: ${metadata.config.max_iterations || 5}\\n`;\n  entry += `- Score Threshold: ${metadata.config.score_threshold || 90}\\n`;\n}\n\nentry += '\\n';\n\nreturn {\n  json: {\n    ...data,\n    formatted_entry: entry,\n    log_section: `Phase ${data.phase} Start`\n  }\n};"
+      },
+      "id": "format-phase-start",
+      "name": "Format Phase Start",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format Phase End Entry\n// Creates a markdown summary for phase completion\n\nconst data = $input.first().json;\nconst metadata = data.metadata || {};\n\nconst phaseNames = {\n  '0': 'Context Scavenging',\n  '1': 'Product Vision Loop',\n  '2': 'Architecture Loop',\n  '3': 'Final Audit'\n};\n\nconst phaseName = phaseNames[data.phase] || `Phase ${data.phase}`;\n\nlet entry = `\\n#### Phase ${data.phase} Summary\\n\\n`;\nentry += `**Completed**: ${data.timestamp_formatted}\\n`;\nentry += `**Status**: ${metadata.status || 'completed'}\\n`;\n\nif (metadata.duration) {\n  entry += `**Duration**: ${metadata.duration}\\n`;\n}\n\nif (metadata.total_iterations !== undefined) {\n  entry += `**Total Iterations**: ${metadata.total_iterations}\\n`;\n}\n\nif (metadata.final_score !== undefined) {\n  entry += `**Final Score**: ${metadata.final_score}/100\\n`;\n}\n\nif (metadata.artifacts && Array.isArray(metadata.artifacts)) {\n  entry += `**Artifacts Created**:\\n`;\n  metadata.artifacts.forEach(artifact => {\n    entry += `- ${artifact}\\n`;\n  });\n}\n\nif (metadata.key_decisions && Array.isArray(metadata.key_decisions)) {\n  entry += `**Key Decisions**:\\n`;\n  metadata.key_decisions.forEach(decision => {\n    entry += `- ${decision}\\n`;\n  });\n}\n\nentry += '\\n---\\n';\n\nreturn {\n  json: {\n    ...data,\n    formatted_entry: entry,\n    log_section: `Phase ${data.phase} End`\n  }\n};"
+      },
+      "id": "format-phase-end",
+      "name": "Format Phase End",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pass through formatted entry from whichever operation was invoked\nconst data = $input.first().json;\nreturn { json: data };"
+      },
+      "id": "merge-formatted",
+      "name": "Merge Formatted Entries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 200]
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "folderId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "root"
+        },
+        "queryString": "={{ 'name = \\'' + $json.project_id.replace(/'/g, \"\\\\'\") + '\\' and mimeType = \\'application/vnd.google-apps.folder\\'' }}",
+        "returnAll": false,
+        "limit": 1,
+        "options": {}
+      },
+      "id": "find-project-folder",
+      "name": "Find Project Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1140, 200],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "google-drive-oauth2",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if project folder exists and prepare for file operations\n\nconst formattedData = $('Merge Formatted Entries').item.json;\nconst searchResults = $input.first().json;\n\nlet folderId = null;\nlet folderExists = false;\n\n// Check if folder was found\nif (searchResults && searchResults.id) {\n  folderId = searchResults.id;\n  folderExists = true;\n}\n\nreturn {\n  json: {\n    ...formattedData,\n    folder_id: folderId,\n    folder_exists: folderExists,\n    decision_log_filename: 'decision_log.md'\n  }\n};"
+      },
+      "id": "prepare-file-operation",
+      "name": "Prepare File Operation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "folder-exists",
+              "leftValue": "={{ $json.folder_exists }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "folder-exists-check",
+      "name": "Folder Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1580, 200]
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.folder_id }}"
+        },
+        "queryString": "={{ 'name = \\'decision_log.md\\'' }}",
+        "returnAll": false,
+        "limit": 1,
+        "options": {}
+      },
+      "id": "find-decision-log",
+      "name": "Find Decision Log",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1820, 100],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "google-drive-oauth2",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle case where project folder doesn't exist\n// Return warning but don't fail - allows workflow to continue\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    operation: data.operation,\n    project_id: data.project_id,\n    session_id: data.session_id,\n    status: 'warning',\n    message: `Project folder not found for project: ${data.project_id}. Decision log entry not saved. Please ensure the project is initialized first.`,\n    request_id: data.request_id,\n    formatted_entry: data.formatted_entry,\n    timestamp: data.timestamp\n  }\n};"
+      },
+      "id": "folder-not-found",
+      "name": "Folder Not Found Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1820, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if decision_log.md exists and prepare for update or create\n\nconst prevData = $('Prepare File Operation').item.json;\nconst searchResult = $input.first().json;\n\nlet fileExists = false;\nlet fileId = null;\n\nif (searchResult && searchResult.id) {\n  fileExists = true;\n  fileId = searchResult.id;\n}\n\nreturn {\n  json: {\n    ...prevData,\n    file_exists: fileExists,\n    file_id: fileId\n  }\n};"
+      },
+      "id": "check-file-exists",
+      "name": "Check File Exists",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2040, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "file-exists",
+              "leftValue": "={{ $json.file_exists }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "file-exists-check",
+      "name": "File Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2260, 100]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.file_id }}"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain"
+            }
+          }
+        }
+      },
+      "id": "download-existing-log",
+      "name": "Download Existing Log",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2500, 0],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "google-drive-oauth2",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create new decision_log.md with header\n\nconst data = $input.first().json;\n\nconst header = `# Decision Log - ${data.project_id}\\n\\n`;\nconst sessionHeader = `## Session: ${data.session_id}\\n**Started**: ${data.timestamp_formatted}\\n`;\n\nconst newContent = header + sessionHeader + data.formatted_entry;\n\nreturn {\n  json: {\n    ...data,\n    file_content: newContent,\n    action: 'create'\n  }\n};"
+      },
+      "id": "create-new-log",
+      "name": "Create New Log Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Append new entry to existing log\n\nconst prevData = $('Check File Exists').item.json;\nconst downloadedFile = $input.first();\n\n// Get existing content\nlet existingContent = '';\nif (downloadedFile.binary && downloadedFile.binary.data) {\n  existingContent = Buffer.from(downloadedFile.binary.data.data, 'base64').toString('utf8');\n} else if (downloadedFile.json && downloadedFile.json.content) {\n  existingContent = downloadedFile.json.content;\n}\n\n// Append new entry\nconst updatedContent = existingContent + prevData.formatted_entry;\n\nreturn {\n  json: {\n    ...prevData,\n    file_content: updatedContent,\n    action: 'update'\n  }\n};"
+      },
+      "id": "append-to-log",
+      "name": "Append to Existing Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2720, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pass through file content from either create or append path\nconst data = $input.first().json;\nreturn { json: data };"
+      },
+      "id": "merge-content",
+      "name": "Merge Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2940, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-create-action",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "create",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "action-router",
+      "name": "Create or Update?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3040, 100]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.folder_id }}"
+        },
+        "name": "decision_log.md",
+        "contentPropertyName": "={{ $json.file_content }}",
+        "options": {
+          "mimeType": "text/markdown"
+        }
+      },
+      "id": "upload-log-create",
+      "name": "Upload Decision Log",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [3160, 0],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "google-drive-oauth2",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.file_id }}"
+        },
+        "contentPropertyName": "={{ $json.file_content }}",
+        "options": {}
+      },
+      "id": "update-log",
+      "name": "Update Decision Log",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [3160, 200],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "google-drive-oauth2",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare final output based on action taken\n\nconst data = $input.first().json;\n\nlet outputData;\n\n// Determine which path we came from\nif (data.action === 'create') {\n  outputData = $('Merge Content').item.json;\n} else if (data.action === 'update') {\n  outputData = $('Merge Content').item.json;\n} else {\n  // Use input data\n  outputData = data;\n}\n\nreturn {\n  json: {\n    operation: outputData.operation,\n    project_id: outputData.project_id,\n    session_id: outputData.session_id,\n    phase: outputData.phase,\n    status: 'success',\n    message: `Decision log ${outputData.action === 'create' ? 'created' : 'updated'} successfully`,\n    request_id: outputData.request_id,\n    file_id: data.id || outputData.file_id,\n    timestamp: outputData.timestamp,\n    log_section: outputData.log_section\n  }\n};"
+      },
+      "id": "success-output",
+      "name": "Success Output Builder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3380, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final Output - Return decision logger results to caller workflow\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    operation: data.operation,\n    project_id: data.project_id,\n    session_id: data.session_id,\n    phase: data.phase,\n    status: data.status || 'completed',\n    message: data.message || 'Decision logged successfully',\n    request_id: data.request_id,\n    file_id: data.file_id || null,\n    timestamp: data.timestamp,\n    log_section: data.log_section || null\n  }\n};"
+      },
+      "id": "output-merge",
+      "name": "Subworkflow Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3600, 200]
+    }
+  ],
+  "connections": {
+    "Subworkflow Entry Point": {
+      "main": [
+        [
+          {
+            "node": "Input Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Validator": {
+      "main": [
+        [
+          {
+            "node": "Operation Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operation Router": {
+      "main": [
+        [
+          {
+            "node": "Format Decision Entry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Iteration Entry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Approval Entry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Phase Start",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Phase End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Decision Entry": {
+      "main": [
+        [
+          {
+            "node": "Merge Formatted Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Iteration Entry": {
+      "main": [
+        [
+          {
+            "node": "Merge Formatted Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Approval Entry": {
+      "main": [
+        [
+          {
+            "node": "Merge Formatted Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Phase Start": {
+      "main": [
+        [
+          {
+            "node": "Merge Formatted Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Phase End": {
+      "main": [
+        [
+          {
+            "node": "Merge Formatted Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Formatted Entries": {
+      "main": [
+        [
+          {
+            "node": "Find Project Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Project Folder": {
+      "main": [
+        [
+          {
+            "node": "Prepare File Operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare File Operation": {
+      "main": [
+        [
+          {
+            "node": "Folder Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Folder Exists?": {
+      "main": [
+        [
+          {
+            "node": "Find Decision Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Folder Not Found Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Decision Log": {
+      "main": [
+        [
+          {
+            "node": "Check File Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Folder Not Found Handler": {
+      "main": [
+        [
+          {
+            "node": "Subworkflow Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check File Exists": {
+      "main": [
+        [
+          {
+            "node": "File Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File Exists?": {
+      "main": [
+        [
+          {
+            "node": "Download Existing Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create New Log Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Existing Log": {
+      "main": [
+        [
+          {
+            "node": "Append to Existing Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Existing Log": {
+      "main": [
+        [
+          {
+            "node": "Merge Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create New Log Content": {
+      "main": [
+        [
+          {
+            "node": "Merge Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Content": {
+      "main": [
+        [
+          {
+            "node": "Create or Update?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create or Update?": {
+      "main": [
+        [
+          {
+            "node": "Upload Decision Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Decision Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Decision Log": {
+      "main": [
+        [
+          {
+            "node": "Success Output Builder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Decision Log": {
+      "main": [
+        [
+          {
+            "node": "Success Output Builder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Output Builder": {
+      "main": [
+        [
+          {
+            "node": "Subworkflow Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ai-product-factory"
+  },
+  "id": "ai-product-factory-decision-logger",
+  "tags": [
+    {
+      "id": "ai-product-factory",
+      "name": "AI Product Factory"
+    }
+  ]
+}

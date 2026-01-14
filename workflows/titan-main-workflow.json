@@ -1,0 +1,2052 @@
+{
+  "name": "Titan - Main Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "public": false,
+        "initialMessages": "Welcome to the Titan Workflow! 🏗️\n\nI will help you create comprehensive Product Vision and Architecture documents.\n\nPlease provide your input in JSON format:\n```json\n{\n  \"project_id\": \"your-project-name\",\n  \"drive_folder_id\": \"your-google-drive-folder-id\",\n  \"description\": \"Brief description of your project\"\n}\n```\n\nOr simply describe your project and I'll guide you through the process.",
+        "options": {}
+      },
+      "id": "chat-trigger",
+      "name": "User Chat Entry Point",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        500
+      ],
+      "webhookId": "titan-chat"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and validate user input with improved logic\nconst input = $input.first().json;\nconst chatInput = input.chatInput || '';\n\n// ========== TITAN CONFIGURATION ==========\n// These can be overridden via n8n UI: Settings → Environment Variables\n// If not set, sensible defaults are used\nconst CONFIG = {\n  // Adversarial loop settings\n  MAX_ITERATIONS: parseInt($env.TITAN_MAX_ITERATIONS) || 5,\n  SCORE_THRESHOLD: parseFloat($env.TITAN_SCORE_THRESHOLD) || 9.0,\n  \n  // Document processing\n  BATCH_SIZE: parseInt($env.TITAN_BATCH_SIZE) || 3,\n  \n  // Memory settings (messages to retain)\n  MEMORY_WINDOW_CREATOR: parseInt($env.TITAN_MEMORY_CREATOR) || 8,\n  MEMORY_WINDOW_CRITIC: parseInt($env.TITAN_MEMORY_CRITIC) || 6,\n  MEMORY_WINDOW_REFINER: parseInt($env.TITAN_MEMORY_REFINER) || 10,\n  \n  // Timeouts (ms)\n  AGENT_TIMEOUT: parseInt($env.TITAN_AGENT_TIMEOUT) || 120000,\n  HTTP_TIMEOUT: parseInt($env.TITAN_HTTP_TIMEOUT) || 60000,\n  \n  // User confirmation timeout (seconds)\n  CONFIRMATION_TIMEOUT: parseInt($env.TITAN_CONFIRMATION_TIMEOUT) || 86400,\n  \n  // Service URLs (with defaults for Docker networking)\n  GRAPHITI_URL: $env.GRAPHITI_URL || 'http://graphiti:8000',\n  QDRANT_URL: $env.QDRANT_URL || 'http://qdrant:6333'\n};\n\n// Enhanced sanitization to prevent prompt injection and XSS\nconst sanitizeInput = (text) => {\n  if (!text) return '';\n  return text\n    .replace(/\\{\\{/g, '{ {')           // n8n template injection\n    .replace(/\\}\\}/g, '} }')           // n8n template injection\n    .replace(/\\$\\(/g, '$ (')           // Shell command substitution\n    .replace(/`/g, \"'\")                // Backtick (template literals/shell)\n    .replace(/\\$\\{/g, '$ {')           // Template literal injection\n    .replace(/<script[^>]*>/gi, '')    // XSS script tags\n    .replace(/<\\/script>/gi, '')       // XSS script closing tags\n    .replace(/javascript:/gi, '')      // JavaScript protocol\n    .replace(/on\\w+\\s*=/gi, '')        // Event handler injection\n    .replace(/data:/gi, 'data_')       // Data URL injection\n    .trim();\n};\n\n// Try to parse as JSON first\nlet parsed = {};\ntry {\n  // Check if input contains JSON-like structure\n  const jsonMatch = chatInput.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  }\n} catch (e) {\n  // Not JSON, continue with regex parsing\n}\n\n// Extract project_id\nlet project_id = parsed.project_id || parsed.projectId || parsed.project;\nif (!project_id) {\n  const projectMatch = chatInput.match(/project[_\\s-]*(?:id|name)?[:\\s]+([\\w-]+)/i);\n  project_id = projectMatch ? projectMatch[1] : 'titan_' + Date.now();\n}\n\n// Extract drive_folder_id\nlet drive_folder_id = parsed.drive_folder_id || parsed.folderId || parsed.folder_id || parsed.folder;\nif (!drive_folder_id) {\n  const folderMatch = chatInput.match(/folder[_\\s-]*(?:id)?[:\\s]+([\\w-]+)/i);\n  drive_folder_id = folderMatch ? folderMatch[1] : '';\n}\n\n// Generate session timestamp\nconst session_timestamp = new Date().toISOString().replace(/[:.]/g, '-');\n\n// Create validation errors array\nconst validation_errors = [];\nif (!drive_folder_id) {\n  validation_errors.push('Missing Google Drive folder ID');\n}\n\nreturn {\n  json: {\n    project_id: sanitizeInput(project_id),\n    drive_folder_id: drive_folder_id,\n    user_input: sanitizeInput(chatInput),\n    description: sanitizeInput(parsed.description || ''),\n    session_timestamp: session_timestamp,\n    start_time: new Date().toISOString(),\n    validation_errors: validation_errors,\n    is_valid: validation_errors.length === 0,\n    raw_input: chatInput,\n    config: CONFIG\n  }\n};"
+      },
+      "id": "parse-input",
+      "name": "Input Parser & Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-valid",
+              "leftValue": "={{ $json.is_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-input",
+      "name": "Input Validation Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=## ⚠️ Missing Required Information\n\n{{ $json.validation_errors.join('\\n- ') }}\n\nPlease provide the missing information:\n\n**Google Drive Folder ID** is required. You can find it in the URL when viewing your folder:\n`https://drive.google.com/drive/folders/YOUR_FOLDER_ID_HERE`\n\nExample:\n```json\n{\n  \"project_id\": \"{{ $json.project_id }}\",\n  \"drive_folder_id\": \"1abc123def456\",\n  \"description\": \"Your project description\"\n}\n```"
+      },
+      "id": "respond-validation-error",
+      "name": "Validation Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Phase 0: Scavenger Ingestion & Governance\n\nThis phase:\n1. Reads input documents from Google Drive\n2. Identifies technical decisions and standards\n3. Checks Graphiti for existing knowledge\n4. Asks user to confirm new standards\n5. Upserts confirmed items to Qdrant + Graphiti",
+        "height": 260,
+        "width": 320,
+        "color": 4
+      },
+      "id": "note-phase0",
+      "name": "Phase 0 Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "queryString": "={{ \"'\" + $json.drive_folder_id + \"' in parents and mimeType != 'application/vnd.google-apps.folder'\" }}",
+        "returnAll": true,
+        "options": {}
+      },
+      "id": "gdrive-list-files",
+      "name": "Drive Document Scanner",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        660,
+        500
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-files",
+              "leftValue": "={{ $json.id ? true : false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-files",
+      "name": "Document Existence Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 3,
+        "options": {}
+      },
+      "id": "split-doc-batches",
+      "name": "Document Batch Processor",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1050,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Parallel Document Processing\n\nProcesses up to 3 documents simultaneously for faster Phase 0.\n\nBatch size can be adjusted based on:\n- n8n instance resources\n- API rate limits\n- Memory constraints",
+        "height": 180,
+        "width": 280,
+        "color": 4
+      },
+      "id": "note-parallel-processing",
+      "name": "Parallel Processing Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        950,
+        250
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        },
+        "options": {}
+      },
+      "id": "gdrive-download",
+      "name": "Document Downloader",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1100,
+        400
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "text"
+      },
+      "id": "extract-text",
+      "name": "Document Text Extractor",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "# IDENTITY\nYou are the Scavenger - a meticulous technical archaeologist. Your mission is to unearth EVERY technical decision, standard, and constraint from documentation.\n\n# CRITICAL CONTEXT\nBefore marking ANY finding as \"new\", you MUST check the Graphiti knowledge graph using your search_graphiti tool. Only report items NOT already in the knowledge base.\n\n# EXTRACTION TARGETS\nExtract with surgical precision:\n1. **Technology Stack**: Frameworks, languages, databases, cloud services, third-party tools\n2. **Architecture Patterns**: Microservices, monolith, event-driven, CQRS, hexagonal, etc.\n3. **Standards & Conventions**: Coding styles, naming conventions, documentation requirements\n4. **Integration Contracts**: API specifications, data formats, authentication methods\n5. **Quality Requirements**: Performance SLAs, security mandates, compliance needs\n\n# OUTPUT FORMAT (STRICT JSON)\n```json\n[\n  {\n    \"name\": \"PostgreSQL\",\n    \"type\": \"technology|pattern|standard|requirement\",\n    \"description\": \"Primary relational database for user data\",\n    \"source\": \"Section 3.2, paragraph 4\",\n    \"confidence\": 0.95,\n    \"existing_in_graphiti\": false\n  }\n]\n```\n\nReturn ONLY the JSON array. Empty array [] if nothing found."
+        },
+        "text": "={{ 'Analyze this document and extract all technical decisions and standards:\\n\\n' + ($json.data || $json.text || '') }}"
+      },
+      "id": "scavenger-agent",
+      "name": "Scavenger - Tech Standards Extractor",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-sonnet-3.5",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 4096
+        }
+      },
+      "id": "scavenger-openrouter-model",
+      "name": "Scavenger LLM - Claude Sonnet 3.5",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        540
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionId": "={{ $('Input Parser & Validator').item.json.project_id + '_scavenger' }}",
+        "maxMessages": 5
+      },
+      "id": "scavenger-memory",
+      "name": "Scavenger Memory - Zep v3",
+      "type": "n8n-nodes-zep-memory-v3.zepMemoryV3",
+      "typeVersion": 8,
+      "position": [
+        1540,
+        680
+      ],
+      "credentials": {
+        "zepApi": {
+          "name": "Zep Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "name": "search_graphiti",
+        "description": "Search the Graphiti knowledge graph for existing technical standards and decisions. Use this to check if a technology or standard already exists before marking it as new."
+      },
+      "id": "scavenger-graphiti-tool",
+      "name": "Scavenger Tool - Knowledge Graph Search",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the scavenger's findings from AI Agent output\nconst response = $input.first().json;\nconst content = response.output || response.text || '';\n\nlet findings;\ntry {\n  findings = JSON.parse(content);\n  if (findings.items) findings = findings.items;\n  if (!Array.isArray(findings)) findings = [findings];\n} catch (e) {\n  const jsonMatch = content.match(/\\[\\s*\\{[\\s\\S]*\\}\\s*\\]/);\n  if (jsonMatch) {\n    try {\n      findings = JSON.parse(jsonMatch[0]);\n    } catch (e2) {\n      findings = [];\n    }\n  } else {\n    findings = [];\n  }\n}\n\n// Filter out invalid entries\nfindings = findings.filter(f => f && f.name);\n\nif (findings.length === 0) {\n  // Return single item to continue workflow even with no findings\n  return [{\n    json: {\n      _no_findings: true,\n      message: 'No technical standards found in documents'\n    }\n  }];\n}\n\nreturn findings.map(f => ({ json: f }));"
+      },
+      "id": "parse-scavenger",
+      "name": "Scavenger Results Parser",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-findings",
+              "leftValue": "={{ $json._no_findings }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-findings",
+      "name": "Standards Found Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "search_facts",
+            "query": "={{ $json.name + ' ' + $json.type }}",
+            "group_ids": [
+              "titan"
+            ],
+            "limit": 5
+          }
+        }
+      },
+      "id": "check-graphiti",
+      "name": "Knowledge Graph Duplicate Check",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-new",
+              "leftValue": "={{ ($json.result?.length || $json.count || 0) }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-new-standard",
+      "name": "New Standard Detection Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare confirmation request details for the user\nconst scavengerData = $('Scavenger Results Parser').item.json;\nconst inputData = $('Input Parser & Validator').item.json;\nconst executionId = $execution.id;\nconst itemIndex = $itemIndex;\n\n// Build the webhook URL that will be used by the Wait node\nconst webhookSuffix = 'confirm-standard-' + inputData.project_id + '-' + itemIndex;\n\nreturn {\n  json: {\n    confirmation_type: 'standard',\n    standard_name: scavengerData.name,\n    standard_type: scavengerData.type,\n    standard_description: scavengerData.description,\n    message: `🔔 **New Technical Standard Found**\\n\\n**Name:** ${scavengerData.name}\\n**Type:** ${scavengerData.type}\\n**Description:** ${scavengerData.description}\\n\\n**Action Required:** To approve, send a POST request with {\"approve\": true} to the webhook URL. To reject, send {\"approve\": false} or wait for timeout.`,\n    webhook_suffix: webhookSuffix,\n    execution_id: executionId,\n    item_index: itemIndex\n  }\n};"
+      },
+      "id": "prepare-standard-confirmation",
+      "name": "Prepare Standard Confirmation Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2520,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {
+          "webhookSuffix": "={{ $json.webhook_suffix }}",
+          "maxWaitTime": 3600
+        }
+      },
+      "id": "ask-user-confirm",
+      "name": "Wait for Standard Confirmation",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process the webhook response for standard confirmation\nconst webhookData = $input.first().json;\nconst scavengerData = $('Scavenger Results Parser').item.json;\n\n// Check if user approved (look for 'approve' or 'yes' in the response)\nconst approved = webhookData.approve === true || \n                 webhookData.approved === true ||\n                 webhookData.action === 'approve' ||\n                 String(webhookData.decision || '').toLowerCase().includes('yes');\n\nreturn {\n  json: {\n    'Promote to Global Graph?': approved ? 'Yes - Add to Global Knowledge' : 'No - Skip this item',\n    standard_name: scavengerData.name,\n    standard_type: scavengerData.type,\n    standard_description: scavengerData.description,\n    webhook_response: webhookData\n  }\n};"
+      },
+      "id": "process-standard-confirmation",
+      "name": "Process Standard Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2760,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "user-yes",
+              "leftValue": "={{ $json['Promote to Global Graph?'] }}",
+              "rightValue": "Yes - Add to Global Knowledge",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-user-approved",
+      "name": "User Approval Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2860,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "add_episode",
+            "name": "={{ $('Scavenger Results Parser').item.json.name }}",
+            "content": "={{ 'Technical Standard: ' + $('Scavenger Results Parser').item.json.name + '\\nType: ' + $('Scavenger Results Parser').item.json.type + '\\nDescription: ' + $('Scavenger Results Parser').item.json.description }}",
+            "source": "text",
+            "source_description": "Titan Scavenger Ingestion",
+            "group_id": "titan"
+          }
+        }
+      },
+      "id": "add-to-graphiti",
+      "name": "Knowledge Graph Ingestion",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3080,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Qdrant Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "upsert",
+            "content": "={{ 'Technical Standard: ' + $('Scavenger Results Parser').item.json.name + '\\nType: ' + $('Scavenger Results Parser').item.json.type + '\\nDescription: ' + $('Scavenger Results Parser').item.json.description }}",
+            "scope": "global",
+            "type": "standard",
+            "metadata": {
+              "name": "={{ $('Scavenger Results Parser').item.json.name }}",
+              "source": "scavenger",
+              "project_id": "={{ $('Input Parser & Validator').item.json.project_id }}"
+            }
+          }
+        }
+      },
+      "id": "add-to-qdrant",
+      "name": "Vector Store Ingestion",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3300,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Phase 1: Product Vision Loop\n\nThis phase uses the Adversarial Agent Loop:\n- Visionary (Creator): Drafts Master_Vision.md\n- Critic: Scores consistency against Graphiti\n- Refiner: Improves until score > 9\n\nOutput saved to Google Drive",
+        "height": 240,
+        "width": 320,
+        "color": 5
+      },
+      "id": "note-phase1",
+      "name": "Phase 1 Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge-phase0",
+      "name": "Phase 0 Results Aggregator",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        3520,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Save checkpoint after Phase 0\nconst parseInput = $('Input Parser & Validator').first().json;\n\nreturn {\n  json: {\n    checkpoint: 'phase0_complete',\n    project_id: parseInput.project_id,\n    drive_folder_id: parseInput.drive_folder_id,\n    session_timestamp: parseInput.session_timestamp,\n    start_time: parseInput.start_time,\n    phase0_complete_time: new Date().toISOString()\n  }\n};"
+      },
+      "id": "checkpoint-phase0",
+      "name": "Phase 0 Checkpoint",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "operation": "create",
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Input Parser & Validator').item.json.drive_folder_id }}"
+        },
+        "name": "={{ 'Session_' + $('Input Parser & Validator').item.json.session_timestamp }}",
+        "options": {}
+      },
+      "id": "create-session-folder",
+      "name": "Session Folder Creator",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3960,
+        400
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store session folder ID for all subsequent uploads\nconst folderData = $input.first().json;\nconst checkpointData = $('Phase 0 Checkpoint').first().json;\n\nreturn {\n  json: {\n    ...checkpointData,\n    session_folder_id: folderData.id,\n    session_folder_name: folderData.name,\n    session_folder_created: new Date().toISOString()\n  }\n};"
+      },
+      "id": "store-session-folder",
+      "name": "Session Folder ID Storage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "search_facts",
+            "query": "target audience market positioning business goals product requirements",
+            "group_ids": [
+              "titan"
+            ],
+            "limit": 20
+          }
+        }
+      },
+      "id": "get-vision-context",
+      "name": "Vision Context Retrieval",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        4400,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are a market research specialist with real-time web search capabilities. Analyze market trends, competitive landscape, and industry data for the given product/service.\n\nFocus on:\n1. **Market Size & Growth** - Current TAM/SAM/SOM estimates and growth projections\n2. **Competitive Landscape** - Key players, market share, positioning strategies\n3. **Industry Trends** - Emerging technologies, regulatory changes, consumer behavior shifts\n4. **Opportunities & Threats** - Market gaps, potential disruptions, timing considerations\n\nProvide data-driven insights with sources where available. Be specific and quantitative when possible."
+        },
+        "text": "={{ 'Research market trends and competitive landscape for: ' + ($('Input Parser & Validator').item.json.user_input || $('Input Parser & Validator').item.json.description || 'technology product') }}"
+      },
+      "id": "perplexity-research",
+      "name": "Market Research Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        4840,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "perplexity/llama-3.1-sonar-small-128k-online",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 2048
+        }
+      },
+      "id": "perplexity-openrouter-model",
+      "name": "Perplexity LLM - Sonar via OpenRouter",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        4840,
+        540
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Adversarial Agent Loop"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task": "Create a comprehensive Product Vision document (Master_Vision.md)",
+            "context": "={{ 'GRAPHITI KNOWLEDGE:\\n' + JSON.stringify($('Vision Context Retrieval').item.json.result || []) + '\\n\\nMARKET RESEARCH:\\n' + ($('Market Research Agent').item.json.output || 'No market data available') + '\\n\\nUSER REQUIREMENTS:\\n' + $('Input Parser & Validator').item.json.user_input }}",
+            "creator_prompt": "You are The Visionary - a strategic product leader. Create a comprehensive Master_Vision.md document that includes:\n\n1. **Executive Summary**\n2. **Problem Statement** - What problem are we solving?\n3. **Target Audience** - Detailed persona analysis\n4. **Value Proposition** - Unique value we provide\n5. **Market Opportunity** - Size, trends, timing\n6. **Product Goals** - SMART goals\n7. **Success Metrics** - KPIs and measurement\n8. **Competitive Analysis** - Key competitors and differentiation\n9. **Risk Assessment** - Major risks and mitigations\n10. **Timeline** - High-level roadmap\n\nUse the provided context (Graphiti knowledge, market research) to inform your vision. Be specific and data-driven.",
+            "critic_prompt": "You are The Critic - a rigorous product reviewer. Evaluate the Product Vision document against:\n\n1. **Consistency** - Does it align with facts in our knowledge graph?\n2. **Completeness** - Are all sections adequately addressed?\n3. **Clarity** - Is the vision clear and actionable?\n4. **Feasibility** - Are goals realistic?\n5. **Market Alignment** - Does it match market realities?\n6. **Measurability** - Can we track progress?\n\nBe harsh but constructive. A score of 9+ means production-ready.",
+            "refiner_prompt": "You are The Refiner - a skilled product writer. Your job is to improve the draft based on the Critic's feedback while maintaining the original intent. Address every issue raised. Strengthen weak sections. Add specificity where needed.",
+            "max_iterations": 5,
+            "score_threshold": 9
+          }
+        }
+      },
+      "id": "vision-loop",
+      "name": "Vision Document Generator",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        5060,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare content for saving and extract from adversarial loop output\nconst visionResult = $input.first().json;\nconst parseInput = $('Input Parser & Validator').first().json;\nconst sessionFolder = $('Session Folder ID Storage').first().json;\n\n// Get the final draft content\nconst content = visionResult.final_draft || '';\n\nreturn {\n  json: {\n    content: content,\n    filename: `Master_Vision_${parseInput.project_id}_${parseInput.session_timestamp}.md`,\n    drive_folder_id: sessionFolder.session_folder_id,\n    final_score: visionResult.final_score,\n    total_iterations: visionResult.total_iterations,\n    status: visionResult.status\n  },\n  binary: {\n    file: {\n      data: Buffer.from(content).toString('base64'),\n      mimeType: 'text/markdown',\n      fileName: `Master_Vision_${parseInput.project_id}_${parseInput.session_timestamp}.md`\n    }\n  }\n};"
+      },
+      "id": "prepare-vision-file",
+      "name": "Vision File Packager",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5280,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Save iteration history as individual markdown files for Vision phase\nconst visionResult = $input.first().json;\nconst sessionFolder = $('Session Folder ID Storage').first().json;\nconst parseInput = $('Input Parser & Validator').first().json;\n\nconst iterationHistory = visionResult.telemetry?.iteration_history || [];\n\nif (iterationHistory.length === 0) {\n    return [{json: {message: 'No iteration history to save'}}];\n}\n\n// Create one output per iteration file\nconst outputs = [];\nfor (const entry of iterationHistory) {\n    let content = '';\n    let filename = '';\n    \n    if (entry.action === 'creator' && entry.draft_content) {\n        content = `# Vision Draft - Iteration ${entry.iteration}\n\n**Timestamp:** ${entry.timestamp}\n**Action:** Creator\n**Draft Length:** ${entry.draft_length} characters\n\n---\n\n${entry.draft_content}`;\n        filename = `Vision_${entry.filename}`;\n    } else if (entry.action === 'critic' && entry.feedback_content) {\n        content = `# Vision Critic Feedback - Iteration ${entry.iteration}\n\n**Timestamp:** ${entry.timestamp}\n**Action:** Critic\n**Score:** ${entry.score}/10\n**Issues Found:** ${entry.issues_count}\n\n---\n\n${entry.feedback_content}\n\n---\n\n## Evaluation Details\n\n\\`\\`\\`json\n${JSON.stringify(entry.evaluation, null, 2)}\n\\`\\`\\``;\n        filename = `Vision_${entry.filename}`;\n    } else if (entry.action === 'refiner' && entry.draft_content) {\n        content = `# Vision Refined Draft - Iteration ${entry.iteration}\n\n**Timestamp:** ${entry.timestamp}\n**Action:** Refiner\n**Previous Score:** ${entry.previous_score}/10\n**Draft Length:** ${entry.draft_length} characters\n\n---\n\n${entry.draft_content}`;\n        filename = `Vision_${entry.filename}`;\n    }\n    \n    if (content && filename) {\n        outputs.push({\n            json: {\n                content: content,\n                filename: filename,\n                session_folder_id: sessionFolder.session_folder_id,\n                phase: 'vision',\n                iteration: entry.iteration,\n                action: entry.action\n            },\n            binary: {\n                file: {\n                    data: Buffer.from(content).toString('base64'),\n                    mimeType: 'text/markdown',\n                    fileName: filename\n                }\n            }\n        });\n    }\n}\n\nreturn outputs;"
+      },
+      "id": "save-vision-paper-trail",
+      "name": "Vision Paper Trail Packager",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5720,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.session_folder_id }}"
+        },
+        "binaryData": true,
+        "name": "={{ $json.filename }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": ""
+        },
+        "options": {
+          "mimeType": "text/markdown"
+        }
+      },
+      "id": "upload-vision-paper-trail",
+      "name": "Vision Paper Trail Uploader",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        5940,
+        500
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.drive_folder_id }}"
+        },
+        "binaryData": true,
+        "name": "={{ $json.filename }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": ""
+        },
+        "options": {
+          "mimeType": "text/markdown"
+        }
+      },
+      "id": "save-vision",
+      "name": "Vision Document Uploader",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        5500,
+        400
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Phase 2: Architecture Loop\n\nThis phase uses the Adversarial Agent Loop:\n- Architect (Creator): Drafts Master_Architecture.md (ARC42)\n- Validator (Dr. Doom): Pre-mortem risk analysis\n- Fixer: Researches and applies fixes\n\nConstrained by Graphiti tech stack",
+        "height": 240,
+        "width": 320,
+        "color": 6
+      },
+      "id": "note-phase2",
+      "name": "Phase 2 Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        5200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Save checkpoint after Phase 1 and prepare for Phase 2\nconst parseInput = $('Input Parser & Validator').first().json;\nconst visionResult = $('Vision File Packager').first().json;\nconst sessionFolder = $('Session Folder ID Storage').first().json;\n\nreturn {\n  json: {\n    checkpoint: 'phase1_complete',\n    project_id: parseInput.project_id,\n    drive_folder_id: parseInput.drive_folder_id,\n    session_folder_id: sessionFolder.session_folder_id,\n    session_timestamp: parseInput.session_timestamp,\n    vision_score: visionResult.final_score,\n    vision_iterations: visionResult.total_iterations,\n    phase1_complete_time: new Date().toISOString()\n  }\n};"
+      },
+      "id": "checkpoint-phase1",
+      "name": "Phase 1 Checkpoint",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6160,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "search_nodes",
+            "query": "technology stack framework database architecture pattern",
+            "group_ids": [
+              "titan"
+            ],
+            "limit": 30
+          }
+        }
+      },
+      "id": "get-tech-stack",
+      "name": "Tech Stack Retrieval",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        5940,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "search_facts",
+            "query": "failure problem issue bug incident postmortem lessons learned",
+            "group_ids": [
+              "titan"
+            ],
+            "limit": 20
+          }
+        }
+      },
+      "id": "get-historical-failures",
+      "name": "Historical Failures Retrieval",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        5940,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge-graphiti-queries",
+      "name": "Architecture Context Merger",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        6160,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Adversarial Agent Loop"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task": "Create a comprehensive System Architecture document (Master_Architecture.md) following the ARC42 template",
+            "context": "={{ 'PRODUCT VISION:\\n' + ($('Vision File Packager').item.json.content || '') + '\\n\\nAPPROVED TECH STACK:\\n' + JSON.stringify($('Tech Stack Retrieval').item.json.result || []) + '\\n\\nHISTORICAL FAILURES TO AVOID:\\n' + JSON.stringify($('Historical Failures Retrieval').item.json.result || []) }}",
+            "creator_prompt": "You are The Architect - a senior solutions architect. Create a Master_Architecture.md document following the ARC42 template:\n\n1. **Introduction and Goals** - What and why\n2. **Constraints** - Technical and organizational limits\n3. **Context and Scope** - System boundaries\n4. **Solution Strategy** - Key architectural decisions\n5. **Building Block View** - Component breakdown\n6. **Runtime View** - Key scenarios\n7. **Deployment View** - Infrastructure\n8. **Crosscutting Concepts** - Security, logging, etc.\n9. **Architecture Decisions** - ADRs\n10. **Quality Requirements** - NFRs\n11. **Risks and Technical Debt**\n12. **Glossary**\n\n⚠️ CRITICAL CONSTRAINT: You may ONLY use technologies from the APPROVED TECH STACK. Do NOT introduce any technology not listed there.",
+            "critic_prompt": "You are Dr. Doom (The Validator) - a pessimistic but thorough architect. Perform a PRE-MORTEM analysis:\n\n1. **Tech Stack Compliance** - Are ANY non-approved technologies proposed? (Auto-fail if yes)\n2. **Historical Patterns** - Does this repeat any HISTORICAL FAILURES?\n3. **Scalability** - Will this scale to 10x?\n4. **Security** - Any obvious vulnerabilities?\n5. **Maintainability** - Can a junior dev understand this?\n6. **Cost** - Any hidden infrastructure costs?\n7. **Integration** - Are external dependencies well-defined?\n\nAssume everything that CAN go wrong WILL go wrong. Score harshly.",
+            "refiner_prompt": "You are The Fixer - a pragmatic senior engineer. Fix the architecture issues identified by Dr. Doom. For each issue:\n1. Acknowledge the problem\n2. Propose a concrete solution\n3. If external research is needed, say 'RESEARCH_NEEDED: [topic]'\n\nDo NOT compromise on tech stack compliance.",
+            "max_iterations": 5,
+            "score_threshold": 9
+          }
+        }
+      },
+      "id": "architecture-loop",
+      "name": "Architecture Document Generator",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        6380,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare architecture content for saving\nconst archResult = $input.first().json;\nconst parseInput = $('Input Parser & Validator').first().json;\nconst sessionFolder = $('Session Folder ID Storage').first().json;\n\nconst content = archResult.final_draft || '';\n\nreturn {\n  json: {\n    content: content,\n    filename: `Master_Architecture_${parseInput.project_id}_${parseInput.session_timestamp}.md`,\n    drive_folder_id: sessionFolder.session_folder_id,\n    final_score: archResult.final_score,\n    total_iterations: archResult.total_iterations,\n    status: archResult.status\n  },\n  binary: {\n    file: {\n      data: Buffer.from(content).toString('base64'),\n      mimeType: 'text/markdown',\n      fileName: `Master_Architecture_${parseInput.project_id}_${parseInput.session_timestamp}.md`\n    }\n  }\n};"
+      },
+      "id": "prepare-arch-file",
+      "name": "Architecture File Packager",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6160,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Save iteration history as individual markdown files for Architecture phase\nconst archResult = $input.first().json;\nconst sessionFolder = $('Session Folder ID Storage').first().json;\nconst parseInput = $('Input Parser & Validator').first().json;\n\nconst iterationHistory = archResult.telemetry?.iteration_history || [];\n\nif (iterationHistory.length === 0) {\n    return [{json: {message: 'No iteration history to save'}}];\n}\n\n// Create one output per iteration file\nconst outputs = [];\nfor (const entry of iterationHistory) {\n    let content = '';\n    let filename = '';\n    \n    if (entry.action === 'creator' && entry.draft_content) {\n        content = `# Architecture Draft - Iteration ${entry.iteration}\n\n**Timestamp:** ${entry.timestamp}\n**Action:** Creator\n**Draft Length:** ${entry.draft_length} characters\n\n---\n\n${entry.draft_content}`;\n        filename = `Architecture_${entry.filename}`;\n    } else if (entry.action === 'critic' && entry.feedback_content) {\n        content = `# Architecture Critic Feedback - Iteration ${entry.iteration}\n\n**Timestamp:** ${entry.timestamp}\n**Action:** Critic\n**Score:** ${entry.score}/10\n**Issues Found:** ${entry.issues_count}\n\n---\n\n${entry.feedback_content}\n\n---\n\n## Evaluation Details\n\n\\`\\`\\`json\n${JSON.stringify(entry.evaluation, null, 2)}\n\\`\\`\\``;\n        filename = `Architecture_${entry.filename}`;\n    } else if (entry.action === 'refiner' && entry.draft_content) {\n        content = `# Architecture Refined Draft - Iteration ${entry.iteration}\n\n**Timestamp:** ${entry.timestamp}\n**Action:** Refiner\n**Previous Score:** ${entry.previous_score}/10\n**Draft Length:** ${entry.draft_length} characters\n\n---\n\n${entry.draft_content}`;\n        filename = `Architecture_${entry.filename}`;\n    }\n    \n    if (content && filename) {\n        outputs.push({\n            json: {\n                content: content,\n                filename: filename,\n                session_folder_id: sessionFolder.session_folder_id,\n                phase: 'architecture',\n                iteration: entry.iteration,\n                action: entry.action\n            },\n            binary: {\n                file: {\n                    data: Buffer.from(content).toString('base64'),\n                    mimeType: 'text/markdown',\n                    fileName: filename\n                }\n            }\n        });\n    }\n}\n\nreturn outputs;"
+      },
+      "id": "save-arch-paper-trail",
+      "name": "Architecture Paper Trail Packager",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6600,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.session_folder_id }}"
+        },
+        "binaryData": true,
+        "name": "={{ $json.filename }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": ""
+        },
+        "options": {
+          "mimeType": "text/markdown"
+        }
+      },
+      "id": "upload-arch-paper-trail",
+      "name": "Architecture Paper Trail Uploader",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        6820,
+        500
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.drive_folder_id }}"
+        },
+        "binaryData": true,
+        "name": "={{ $json.filename }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": ""
+        },
+        "options": {
+          "mimeType": "text/markdown"
+        }
+      },
+      "id": "save-architecture",
+      "name": "Architecture Document Uploader",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        6380,
+        400
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Phase 3: Final Alignment & Audit\n\nThe Auditor agent:\n- Grades final output (A-F)\n- Detects new technologies\n- Prompts user for global promotion\n- Creates final summary",
+        "height": 220,
+        "width": 320,
+        "color": 7
+      },
+      "id": "note-phase3",
+      "name": "Phase 3 Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6940,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "# IDENTITY\nYou are The Auditor - the final line of defense before production release. Nothing escapes your scrutiny. Your stamp of approval means \"ready to build.\"\n\n# MANDATORY VERIFICATION\n1. Use your query_tech_stack tool to retrieve the COMPLETE approved tech stack from Graphiti\n2. Cross-reference EVERY technology mentioned in both documents against this list\n3. Any unlisted technology = \"new_technologies\" array\n\n# GRADING RUBRIC\n\n| Grade | Meaning | Action Required |\n|-------|---------|------------------|\n| A (90-100) | Production-ready | Ship it |\n| B (80-89) | Minor polish needed | 1-2 hours of edits |\n| C (70-79) | Significant gaps | 1-2 days of rework |\n| D (60-69) | Major issues | Full revision needed |\n| F (<60) | Fundamental problems | Start over |\n\n# EVALUATION CRITERIA\n1. Vision-Architecture Alignment (25%)\n2. Tech Stack Compliance (25%)\n3. Completeness (25%)\n4. Quality of Content (25%)\n\n# OUTPUT FORMAT (STRICT JSON)\n```json\n{\n  \"grade\": \"B\",\n  \"numeric_score\": 85,\n  \"summary\": \"Solid foundation with minor gaps in security section.\",\n  \"new_technologies\": [\"Redis\", \"GraphQL\"],\n  \"recommendations\": [\n    \"Add Redis to approved tech stack or remove from architecture\",\n    \"Expand security section with authentication flow\"\n  ],\n  \"vision_architecture_alignment\": {\n    \"score\": 90,\n    \"issues\": []\n  },\n  \"tech_stack_compliance\": {\n    \"score\": 75,\n    \"violations\": [\"Redis not in approved stack\"]\n  }\n}\n```\n\nReturn ONLY the JSON object."
+        },
+        "text": "={{ 'MASTER VISION:\\n' + ($('Vision File Packager').item.json.content || '') + '\\n\\n---\\n\\nMASTER ARCHITECTURE:\\n' + ($('Architecture File Packager').item.json.content || '') + '\\n\\n---\\n\\nORIGINAL TECH STACK:\\n' + JSON.stringify($('Tech Stack Retrieval').item.json.result || []) }}"
+      },
+      "id": "auditor-agent",
+      "name": "Auditor - Quality Gate Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        7480,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-sonnet-3.5",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 2048
+        }
+      },
+      "id": "auditor-openrouter-model",
+      "name": "Auditor LLM - Claude Sonnet 3.5",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        7040,
+        540
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionId": "={{ $('Input Parser & Validator').item.json.project_id + '_auditor' }}",
+        "maxMessages": 5
+      },
+      "id": "auditor-memory",
+      "name": "Auditor Memory - Zep v3",
+      "type": "n8n-nodes-zep-memory-v3.zepMemoryV3",
+      "typeVersion": 8,
+      "position": [
+        7040,
+        680
+      ],
+      "credentials": {
+        "zepApi": {
+          "name": "Zep Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "name": "query_tech_stack",
+        "description": "Query the Graphiti knowledge graph for the approved technology stack to compare against the architecture document."
+      },
+      "id": "auditor-graphiti-tool",
+      "name": "Auditor Tool - Tech Stack Query",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        7040,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the auditor's response from AI Agent output\nconst response = $input.first().json;\nconst content = response.output || response.text || '';\n\nlet audit;\ntry {\n  audit = JSON.parse(content);\n} catch (e) {\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    try {\n      audit = JSON.parse(jsonMatch[0]);\n    } catch (e2) {\n      audit = {\n        grade: 'C',\n        summary: 'Could not parse audit response',\n        new_technologies: [],\n        recommendations: ['Manual review required']\n      };\n    }\n  } else {\n    audit = {\n      grade: 'C',\n      summary: 'Could not parse audit response',\n      new_technologies: [],\n      recommendations: ['Manual review required']\n    };\n  }\n}\n\nreturn {\n  json: {\n    ...audit,\n    has_new_tech: (audit.new_technologies || []).length > 0\n  }\n};"
+      },
+      "id": "parse-audit",
+      "name": "Audit Results Parser",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7260,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-new-tech",
+              "leftValue": "={{ $json.has_new_tech }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-new-tech",
+      "name": "New Tech Detection Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7480,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare tech promotion confirmation request details for the user\nconst auditData = $('Audit Results Parser').item.json;\nconst inputData = $('Input Parser & Validator').item.json;\nconst executionId = $execution.id;\n\n// Build the webhook URL suffix\nconst webhookSuffix = 'promote-tech-' + inputData.project_id;\nconst newTechs = auditData.new_technologies || [];\n\nreturn {\n  json: {\n    confirmation_type: 'tech_promotion',\n    new_technologies: newTechs,\n    message: `🔔 **New Technologies Detected**\\n\\n**Technologies Found:**\\n${newTechs.map(t => '- ' + t).join('\\n')}\\n\\n**Action Required:** To approve adding ALL technologies to global knowledge, send a POST request with {\"approve\": true} to the webhook URL. To reject, send {\"approve\": false} or wait for timeout.`,\n    webhook_suffix: webhookSuffix,\n    execution_id: executionId\n  }\n};"
+      },
+      "id": "prepare-tech-promotion",
+      "name": "Prepare Tech Promotion Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7580,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {
+          "webhookSuffix": "={{ $json.webhook_suffix }}",
+          "maxWaitTime": 3600
+        }
+      },
+      "id": "ask-promote-tech",
+      "name": "Wait for Tech Promotion Confirmation",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        7700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process the webhook response for tech promotion confirmation\nconst webhookData = $input.first().json;\nconst auditData = $('Audit Results Parser').item.json;\n\n// Check if user approved (look for 'approve' or 'yes' in the response)\nconst approved = webhookData.approve === true || \n                 webhookData.approved === true ||\n                 webhookData.action === 'approve' ||\n                 String(webhookData.decision || '').toLowerCase().includes('yes');\n\nreturn {\n  json: {\n    'Promote to Global Graph?': approved ? 'Yes - Add ALL to Global Knowledge' : 'No - Leave as local decisions',\n    new_technologies: auditData.new_technologies || [],\n    webhook_response: webhookData\n  }\n};"
+      },
+      "id": "process-tech-promotion",
+      "name": "Process Tech Promotion Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7820,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "promote-yes",
+              "leftValue": "={{ $json['Promote to Global Graph?'] }}",
+              "rightValue": "Yes - Add ALL to Global Knowledge",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-promote-approved",
+      "name": "Tech Promotion Approval Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        7920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split new technologies into individual items for Graphiti ingestion\nconst audit = $('Audit Results Parser').item.json;\nconst newTechs = audit.new_technologies || [];\n\nif (newTechs.length === 0) {\n  return [{ json: { _skip: true } }];\n}\n\nreturn newTechs.map(tech => ({\n  json: {\n    name: tech,\n    type: 'technology',\n    description: `Technology identified during Titan Architecture phase: ${tech}`\n  }\n}));"
+      },
+      "id": "split-new-tech",
+      "name": "New Tech Item Splitter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8140,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Titan - Graphiti Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "add_episode",
+            "name": "={{ $json.name }}",
+            "content": "={{ 'Technology Standard: ' + $json.name + '\\nType: ' + $json.type + '\\nDescription: ' + $json.description }}",
+            "source": "text",
+            "source_description": "Titan Auditor - Promoted Technology",
+            "group_id": "titan"
+          }
+        }
+      },
+      "id": "add-new-tech-graphiti",
+      "name": "New Tech Knowledge Ingestion",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        8360,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "merge-final",
+      "name": "Final Results Aggregator",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        9020,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare final output with full telemetry\nconst parseInput = $('Input Parser & Validator').first().json;\nconst visionFile = $('Vision File Packager').first().json;\nconst archFile = $('Architecture File Packager').first().json;\nconst audit = $('Audit Results Parser').first().json;\n\nconst startTime = new Date(parseInput.start_time);\nconst endTime = new Date();\nconst durationMs = endTime - startTime;\n\nreturn {\n  json: {\n    status: 'completed',\n    grade: audit.grade,\n    summary: audit.summary,\n    vision_file: visionFile.filename,\n    architecture_file: archFile.filename,\n    vision_score: visionFile.final_score,\n    architecture_score: archFile.final_score,\n    vision_iterations: visionFile.total_iterations,\n    architecture_iterations: archFile.total_iterations,\n    project_id: parseInput.project_id,\n    drive_folder_id: parseInput.drive_folder_id,\n    recommendations: audit.recommendations || [],\n    new_technologies: audit.new_technologies || [],\n    telemetry: {\n      start_time: parseInput.start_time,\n      end_time: endTime.toISOString(),\n      duration_ms: durationMs,\n      duration_formatted: `${Math.floor(durationMs / 60000)}m ${Math.floor((durationMs % 60000) / 1000)}s`\n    }\n  }\n};"
+      },
+      "id": "final-output",
+      "name": "Final Output Builder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=## 🏆 Titan Workflow Complete!\n\n**Final Grade: {{ $json.grade }}**\n\n### Summary\n{{ $json.summary }}\n\n### Deliverables\n- 📄 Vision Document: {{ $json.vision_file }} (Score: {{ $json.vision_score }}/10, {{ $json.vision_iterations }} iterations)\n- 🏗️ Architecture Document: {{ $json.architecture_file }} (Score: {{ $json.architecture_score }}/10, {{ $json.architecture_iterations }} iterations)\n\n### Performance\n- Total Duration: {{ $json.telemetry.duration_formatted }}\n\n{{ $json.recommendations.length > 0 ? '### Recommendations\\n- ' + $json.recommendations.join('\\n- ') : '' }}\n\n{{ $json.new_technologies.length > 0 ? '### New Technologies Detected\\n- ' + $json.new_technologies.join('\\n- ') : '' }}\n\n### Next Steps\nReview the documents in your Google Drive folder and proceed with implementation.\n\n---\n*Titan Foundation Workflow - Powered by Graphiti + Qdrant + Perplexity*\n*Project ID: {{ $json.project_id }}*"
+      },
+      "id": "respond-final",
+      "name": "User Response Sender",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        9020,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "User Chat Entry Point": {
+      "main": [
+        [
+          {
+            "node": "Input Parser & Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Parser & Validator": {
+      "main": [
+        [
+          {
+            "node": "Input Validation Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Validation Gate": {
+      "main": [
+        [
+          {
+            "node": "Drive Document Scanner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validation Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive Document Scanner": {
+      "main": [
+        [
+          {
+            "node": "Document Existence Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Document Existence Check": {
+      "main": [
+        [
+          {
+            "node": "Document Batch Processor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Phase 0 Results Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Document Downloader": {
+      "main": [
+        [
+          {
+            "node": "Document Text Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Document Text Extractor": {
+      "main": [
+        [
+          {
+            "node": "Scavenger - Tech Standards Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scavenger - Tech Standards Extractor": {
+      "main": [
+        [
+          {
+            "node": "Scavenger Results Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scavenger Memory - Zep v3": {
+      "ai_memory": [
+        [
+          {
+            "node": "Scavenger - Tech Standards Extractor",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scavenger LLM - Claude Sonnet 3.5": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Scavenger - Tech Standards Extractor",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scavenger Tool - Knowledge Graph Search": {
+      "ai_tool": [
+        [
+          {
+            "node": "Scavenger - Tech Standards Extractor",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scavenger Results Parser": {
+      "main": [
+        [
+          {
+            "node": "Standards Found Gate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Document Batch Processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Standards Found Gate": {
+      "main": [
+        [
+          {
+            "node": "Knowledge Graph Duplicate Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Phase 0 Results Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Graph Duplicate Check": {
+      "main": [
+        [
+          {
+            "node": "New Standard Detection Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Standard Detection Gate": {
+      "main": [
+        [
+          {
+            "node": "Prepare Standard Confirmation Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Phase 0 Results Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Standard Confirmation Request": {
+      "main": [
+        [
+          {
+            "node": "Wait for Standard Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Standard Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Process Standard Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Standard Confirmation": {
+      "main": [
+        [
+          {
+            "node": "User Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "User Approval Gate": {
+      "main": [
+        [
+          {
+            "node": "Knowledge Graph Ingestion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Phase 0 Results Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Graph Ingestion": {
+      "main": [
+        [
+          {
+            "node": "Vector Store Ingestion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vector Store Ingestion": {
+      "main": [
+        [
+          {
+            "node": "Phase 0 Results Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phase 0 Results Aggregator": {
+      "main": [
+        [
+          {
+            "node": "Phase 0 Checkpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phase 0 Checkpoint": {
+      "main": [
+        [
+          {
+            "node": "Session Folder Creator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session Folder Creator": {
+      "main": [
+        [
+          {
+            "node": "Session Folder ID Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session Folder ID Storage": {
+      "main": [
+        [
+          {
+            "node": "Vision Context Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision Context Retrieval": {
+      "main": [
+        [
+          {
+            "node": "Market Research Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Market Research Agent": {
+      "main": [
+        [
+          {
+            "node": "Vision Document Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity LLM - Sonar via OpenRouter": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Market Research Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision Document Generator": {
+      "main": [
+        [
+          {
+            "node": "Vision File Packager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision File Packager": {
+      "main": [
+        [
+          {
+            "node": "Vision Document Uploader",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Vision Paper Trail Packager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision Document Uploader": {
+      "main": [
+        [
+          {
+            "node": "Phase 1 Checkpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phase 1 Checkpoint": {
+      "main": [
+        [
+          {
+            "node": "Tech Stack Retrieval",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Historical Failures Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tech Stack Retrieval": {
+      "main": [
+        [
+          {
+            "node": "Architecture Context Merger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Historical Failures Retrieval": {
+      "main": [
+        [
+          {
+            "node": "Architecture Context Merger",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Architecture Context Merger": {
+      "main": [
+        [
+          {
+            "node": "Architecture Document Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Architecture Document Generator": {
+      "main": [
+        [
+          {
+            "node": "Architecture File Packager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Architecture File Packager": {
+      "main": [
+        [
+          {
+            "node": "Architecture Document Uploader",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Architecture Paper Trail Packager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Architecture Document Uploader": {
+      "main": [
+        [
+          {
+            "node": "Auditor - Quality Gate Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auditor - Quality Gate Agent": {
+      "main": [
+        [
+          {
+            "node": "Audit Results Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auditor Memory - Zep v3": {
+      "ai_memory": [
+        [
+          {
+            "node": "Auditor - Quality Gate Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auditor LLM - Claude Sonnet 3.5": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Auditor - Quality Gate Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auditor Tool - Tech Stack Query": {
+      "ai_tool": [
+        [
+          {
+            "node": "Auditor - Quality Gate Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Results Parser": {
+      "main": [
+        [
+          {
+            "node": "New Tech Detection Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Tech Detection Gate": {
+      "main": [
+        [
+          {
+            "node": "Prepare Tech Promotion Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final Results Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Tech Promotion Request": {
+      "main": [
+        [
+          {
+            "node": "Wait for Tech Promotion Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Tech Promotion Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Process Tech Promotion Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Tech Promotion Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Tech Promotion Approval Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tech Promotion Approval Gate": {
+      "main": [
+        [
+          {
+            "node": "New Tech Item Splitter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final Results Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Tech Item Splitter": {
+      "main": [
+        [
+          {
+            "node": "New Tech Knowledge Ingestion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Tech Knowledge Ingestion": {
+      "main": [
+        [
+          {
+            "node": "Final Results Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Results Aggregator": {
+      "main": [
+        [
+          {
+            "node": "Final Output Builder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Output Builder": {
+      "main": [
+        [
+          {
+            "node": "User Response Sender",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision Paper Trail Packager": {
+      "main": [
+        [
+          {
+            "node": "Vision Paper Trail Uploader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision Paper Trail Uploader": {
+      "main": [
+        [
+          {
+            "node": "Phase 1 Checkpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Architecture Paper Trail Packager": {
+      "main": [
+        [
+          {
+            "node": "Architecture Paper Trail Uploader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Architecture Paper Trail Uploader": {
+      "main": [
+        [
+          {
+            "node": "Auditor - Quality Gate Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Document Batch Processor": {
+      "main": [
+        [
+          {
+            "node": "Document Downloader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Titan",
+      "createdAt": "2026-01-12T00:00:00.000Z",
+      "updatedAt": "2026-01-12T00:00:00.000Z"
+    },
+    {
+      "name": "Production",
+      "createdAt": "2026-01-12T00:00:00.000Z",
+      "updatedAt": "2026-01-12T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-13T00:00:00.000Z",
+  "versionId": "4"
+}

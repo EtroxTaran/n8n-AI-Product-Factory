@@ -1,0 +1,236 @@
+services:
+  # --- 0. Reverse Proxy (Traefik) ---
+  traefik:
+    image: traefik:v3.0
+    restart: unless-stopped
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_certs:/letsencrypt
+    networks:
+      - n8n_network
+
+  # --- 1. Workflow Engine (n8n) ---
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:next
+    restart: unless-stopped
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_HOST=${DOMAIN_NAME}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://${DOMAIN_NAME}/
+      - GENERIC_TIMEZONE=${TIMEZONE}
+      # Connection to Qdrant (Internal)
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      # Connection to Graphiti MCP (Internal)
+      - GRAPHITI_URL=http://graphiti:8080
+      # Connection to SeaweedFS S3 (Internal)
+      - S3_ENDPOINT=http://seaweedfs:8888
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
+      - S3_SECRET_KEY=${S3_SECRET_KEY}
+      - S3_BUCKET=${S3_BUCKET}
+      # Titan Config
+      - TITAN_MAX_ITERATIONS=${TITAN_MAX_ITERATIONS}
+      - TITAN_SCORE_THRESHOLD=${TITAN_SCORE_THRESHOLD}
+      - TITAN_BATCH_SIZE=${TITAN_BATCH_SIZE}
+      - TITAN_AGENT_TIMEOUT=${TITAN_AGENT_TIMEOUT}
+      - TITAN_HTTP_TIMEOUT=${TITAN_HTTP_TIMEOUT}
+      - TITAN_CONFIRMATION_TIMEOUT=${TITAN_CONFIRMATION_TIMEOUT}
+      - TITAN_MEMORY_CREATOR=${TITAN_MEMORY_CREATOR}
+      - TITAN_MEMORY_CRITIC=${TITAN_MEMORY_CRITIC}
+      - TITAN_MEMORY_REFINER=${TITAN_MEMORY_REFINER}
+      # Intelligence Engine
+      - MODEL_ARCHITECT=${MODEL_ARCHITECT}
+      - MODEL_CRITIC=${MODEL_CRITIC}
+      - MODEL_REFINER=${MODEL_REFINER}
+      - MODEL_CONTEXT=${MODEL_CONTEXT}
+      - MODEL_RESEARCH=${MODEL_RESEARCH}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      seaweedfs:
+        condition: service_healthy
+    networks:
+      - n8n_network
+    volumes:
+      - n8n_data:/home/node/.n8n
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.n8n.rule=Host(`${DOMAIN_NAME}`)"
+      - "traefik.http.routers.n8n.entrypoints=websecure"
+      - "traefik.http.routers.n8n.tls.certresolver=letsencrypt"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+
+  # --- 2. n8n Databases ---
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    networks:
+      - n8n_network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    networks:
+      - n8n_network
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- 3. Vector Database (Qdrant) ---
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    environment:
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}
+    networks:
+      - n8n_network
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  # --- 4. Temporal Graph RAG (Graphiti + FalkorDB) ---
+  graphiti:
+    image: zepai/knowledge-graph-mcp:latest
+    restart: unless-stopped
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - FALKORDB_URI=redis://falkordb:6379
+      - PORT=8080
+    depends_on:
+      - falkordb
+    networks:
+      - n8n_network
+    ports:
+      - "8000:8080"
+
+  falkordb:
+    image: falkordb/falkordb:latest
+    restart: unless-stopped
+    networks:
+      - n8n_network
+    volumes:
+      - falkordb_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- 5. S3-Compatible Object Storage (SeaweedFS) ---
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    restart: unless-stopped
+    command: "server -s3 -dir=/data -ip=seaweedfs -s3.port=8888 -filer.port=8333"
+    environment:
+      - WEED_MASTER_VOLUME_SIZE_LIMIT_MB=100
+    networks:
+      - n8n_network
+    volumes:
+      - seaweedfs_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8333/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.s3.rule=Host(`s3.${DOMAIN_NAME}`)"
+      - "traefik.http.routers.s3.entrypoints=websecure"
+      - "traefik.http.routers.s3.tls.certresolver=letsencrypt"
+      - "traefik.http.services.s3.loadbalancer.server.port=8888"
+
+  # --- 6. Frontend Dashboard ---
+  dashboard:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - N8N_WEBHOOK_URL=http://n8n:5678/webhook
+      - S3_ENDPOINT=http://seaweedfs:8888
+      - S3_PUBLIC_ENDPOINT=https://s3.${DOMAIN_NAME}
+      - S3_BUCKET=${S3_BUCKET}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
+      - S3_SECRET_KEY=${S3_SECRET_KEY}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Google OAuth
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - AUTH_SECRET=${AUTH_SECRET}
+      - AUTH_URL=https://dashboard.${DOMAIN_NAME}
+      - ALLOWED_EMAIL_DOMAINS=${ALLOWED_EMAIL_DOMAINS}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      n8n:
+        condition: service_started
+      seaweedfs:
+        condition: service_healthy
+    networks:
+      - n8n_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`dashboard.${DOMAIN_NAME}`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.services.dashboard.loadbalancer.server.port=3000"
+
+networks:
+  n8n_network:
+    driver: bridge
+
+volumes:
+  n8n_data:
+  postgres_data:
+  redis_data:
+  qdrant_data:
+  falkordb_data:
+  seaweedfs_data:
+  traefik_certs:

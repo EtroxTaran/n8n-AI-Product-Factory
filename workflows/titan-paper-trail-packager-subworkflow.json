@@ -1,0 +1,106 @@
+{
+  "name": "Titan - Paper Trail Packager",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "telemetry",
+              "type": "string"
+            },
+            {
+              "name": "phase",
+              "type": "string"
+            },
+            {
+              "name": "session_folder_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "workflow-input",
+      "name": "Subworkflow Entry Point",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and package iteration history from telemetry\nconst input = $input.first().json;\nconst iterationHistory = input.telemetry?.iteration_history || [];\nconst phase = input.phase || 'unknown';\nconst sessionFolderId = input.session_folder_id;\n\nif (iterationHistory.length === 0) {\n    return [{json: {message: 'No iteration history to save', status: 'empty'}}];\n}\n\n// Create one output per iteration file\nconst outputs = [];\nfor (const entry of iterationHistory) {\n    // Validate entry\n    if (!entry || typeof entry.iteration !== 'number') continue;\n    \n    let content = '';\n    let filename = '';\n    \n    if (entry.action === 'creator' && entry.draft_content) {\n        content = `# ${phase.charAt(0).toUpperCase() + phase.slice(1)} Draft - Iteration ${entry.iteration}\n\n**Timestamp:** ${entry.timestamp}\n**Action:** Creator\n**Draft Length:** ${entry.draft_length} characters\n\n---\n\n${entry.draft_content}`;\n        filename = `${phase}_${entry.filename}`;\n    } else if (entry.action === 'critic' && entry.feedback_content) {\n        content = `# ${phase.charAt(0).toUpperCase() + phase.slice(1)} Critic Feedback - Iteration ${entry.iteration}\n\n**Timestamp:** ${entry.timestamp}\n**Action:** Critic\n**Score:** ${entry.score}/10\n**Issues Found:** ${entry.issues_count}\n\n---\n\n${entry.feedback_content}\n\n---\n\n## Evaluation Details\n\n\\`\\`\\`json\n${JSON.stringify(entry.evaluation, null, 2)}\n\\`\\`\\``;\n        filename = `${phase}_${entry.filename}`;\n    } else if (entry.action === 'refiner' && entry.draft_content) {\n        content = `# ${phase.charAt(0).toUpperCase() + phase.slice(1)} Refined Draft - Iteration ${entry.iteration}\n\n**Timestamp:** ${entry.timestamp}\n**Action:** Refiner\n**Previous Score:** ${entry.previous_score}/10\n**Draft Length:** ${entry.draft_length} characters\n\n---\n\n${entry.draft_content}`;\n        filename = `${phase}_${entry.filename}`;\n    }\n    \n    if (content && filename) {\n        outputs.push({\n            json: {\n                content: content,\n                filename: filename,\n                session_folder_id: sessionFolderId,\n                phase: phase,\n                iteration: entry.iteration,\n                action: entry.action\n            },\n            binary: {\n                file: {\n                    data: Buffer.from(content).toString('base64'),\n                    mimeType: 'text/markdown',\n                    fileName: filename\n                }\n            }\n        });\n    }\n}\n\nreturn outputs;"
+      },
+      "id": "package-paper-trail",
+      "name": "Paper Trail Packager",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "id": "merge-output",
+      "name": "Merge Output",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        440,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Subworkflow Entry Point": {
+      "main": [
+        [
+          {
+            "node": "Paper Trail Packager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paper Trail Packager": {
+      "main": [
+        [
+          {
+            "node": "Merge Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Titan",
+      "createdAt": "2026-01-13T00:00:00.000Z",
+      "updatedAt": "2026-01-13T00:00:00.000Z"
+    },
+    {
+      "name": "Subworkflow",
+      "createdAt": "2026-01-13T00:00:00.000Z",
+      "updatedAt": "2026-01-13T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2026-01-13T00:00:00.000Z",
+  "versionId": "1"
+}

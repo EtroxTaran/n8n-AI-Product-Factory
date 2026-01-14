@@ -1,0 +1,461 @@
+{
+  "name": "AI Product Factory - S3 Storage Operations",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "entry-point",
+      "name": "Subworkflow Entry",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// S3 Storage Operations - Input Validator\n// Validates incoming operation requests\n\nconst input = $input.first().json;\n\nconst operation = input.operation;\nconst validOperations = ['upload_artifact', 'download_artifact', 'list_artifacts', 'sync_to_postgres', 'create_bucket'];\n\nif (!operation || !validOperations.includes(operation)) {\n  throw new Error(`Invalid operation: ${operation}. Valid operations: ${validOperations.join(', ')}`);\n}\n\nconst projectId = input.project_id;\nif (!projectId && operation !== 'create_bucket') {\n  throw new Error('project_id is required for this operation');\n}\n\nreturn {\n  json: {\n    operation,\n    project_id: projectId,\n    artifact_type: input.artifact_type || 'unknown',\n    content: input.content || '',\n    filename: input.filename || '',\n    content_type: input.content_type || 'text/markdown',\n    s3_key: input.s3_key || '',\n    project_state: input.project_state || null,\n    bucket: $env.S3_BUCKET || 'product-factory-artifacts'\n  }\n};"
+      },
+      "id": "input-validator",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "upload",
+              "leftValue": "={{ $json.operation }}",
+              "rightValue": "upload_artifact",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "download",
+              "leftValue": "={{ $json.operation }}",
+              "rightValue": "download_artifact",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "list",
+              "leftValue": "={{ $json.operation }}",
+              "rightValue": "list_artifacts",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "sync",
+              "leftValue": "={{ $json.operation }}",
+              "rightValue": "sync_to_postgres",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "operation-router",
+      "name": "Route Operation",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build S3 key path for upload\nconst input = $input.first().json;\n\nconst projectId = input.project_id;\nconst artifactType = input.artifact_type;\nconst filename = input.filename;\n\nlet keyPath;\nswitch (artifactType) {\n  case 'state':\n    keyPath = `projects/${projectId}/state/${filename}`;\n    break;\n  case 'vision_final':\n  case 'architecture_final':\n  case 'decision_log':\n    keyPath = `projects/${projectId}/artifacts/${filename}`;\n    break;\n  case 'iteration':\n    const phase = input.phase || 'vision';\n    const iteration = input.iteration || 1;\n    keyPath = `projects/${projectId}/iterations/${phase}/v${iteration}/${filename}`;\n    break;\n  case 'standards':\n    keyPath = `projects/${projectId}/standards/${filename}`;\n    break;\n  default:\n    keyPath = `projects/${projectId}/${filename}`;\n}\n\nreturn {\n  json: {\n    ...input,\n    s3_key: keyPath\n  }\n};"
+      },
+      "id": "build-upload-key",
+      "name": "Build Upload Key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, -200]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.S3_ENDPOINT }}/{{ $json.bucket }}/{{ $json.s3_key }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "raw",
+        "body": "={{ $json.content }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "s3-upload",
+      "name": "S3 Upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, -200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "s3-auth",
+          "name": "S3 API Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build upload response\nconst input = $input.first().json;\nconst httpResponse = $('S3 Upload').first().json;\n\nconst success = httpResponse.statusCode >= 200 && httpResponse.statusCode < 300;\n\nreturn {\n  json: {\n    operation: 'upload_artifact',\n    success,\n    s3_key: input.s3_key,\n    bucket: input.bucket,\n    project_id: input.project_id,\n    artifact_type: input.artifact_type,\n    status_code: httpResponse.statusCode,\n    message: success ? 'Upload successful' : `Upload failed: ${httpResponse.statusCode}`\n  }\n};"
+      },
+      "id": "upload-response",
+      "name": "Upload Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, -200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build S3 key for download\nconst input = $input.first().json;\n\nlet keyPath = input.s3_key;\nif (!keyPath && input.filename) {\n  keyPath = `projects/${input.project_id}/artifacts/${input.filename}`;\n}\n\nreturn {\n  json: {\n    ...input,\n    s3_key: keyPath\n  }\n};"
+      },
+      "id": "build-download-key",
+      "name": "Build Download Key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, -50]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.S3_ENDPOINT }}/{{ $json.bucket }}/{{ $json.s3_key }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "s3-download",
+      "name": "S3 Download",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, -50],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "s3-auth",
+          "name": "S3 API Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build download response\nconst input = $input.first().json;\nconst httpResponse = $('S3 Download').first().json;\n\nconst success = httpResponse.statusCode >= 200 && httpResponse.statusCode < 300;\n\nreturn {\n  json: {\n    operation: 'download_artifact',\n    success,\n    s3_key: input.s3_key,\n    content: success ? httpResponse.data : null,\n    project_id: input.project_id,\n    status_code: httpResponse.statusCode,\n    message: success ? 'Download successful' : `Download failed: ${httpResponse.statusCode}`\n  }\n};"
+      },
+      "id": "download-response",
+      "name": "Download Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, -50]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.S3_ENDPOINT }}/{{ $json.bucket }}?prefix=projects/{{ $json.project_id }}/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "s3-list",
+      "name": "S3 List Objects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "s3-auth",
+          "name": "S3 API Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse S3 list response (XML)\nconst input = $input.first().json;\nconst response = $('S3 List Objects').first().json;\n\nlet objects = [];\n\nif (response.statusCode >= 200 && response.statusCode < 300) {\n  // Simple XML parsing for S3 list response\n  const xml = response.data || '';\n  const keyMatches = xml.matchAll(/<Key>([^<]+)<\\/Key>/g);\n  const sizeMatches = xml.matchAll(/<Size>([^<]+)<\\/Size>/g);\n  const dateMatches = xml.matchAll(/<LastModified>([^<]+)<\\/LastModified>/g);\n  \n  const keys = [...keyMatches].map(m => m[1]);\n  const sizes = [...sizeMatches].map(m => parseInt(m[1]));\n  const dates = [...dateMatches].map(m => m[1]);\n  \n  objects = keys.map((key, i) => ({\n    key,\n    size: sizes[i] || 0,\n    lastModified: dates[i] || null,\n    name: key.split('/').pop()\n  }));\n}\n\nreturn {\n  json: {\n    operation: 'list_artifacts',\n    success: response.statusCode >= 200 && response.statusCode < 300,\n    project_id: input.project_id,\n    objects,\n    count: objects.length\n  }\n};"
+      },
+      "id": "list-response",
+      "name": "Parse List Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build PostgreSQL upsert query\nconst input = $input.first().json;\nconst state = input.project_state;\n\nif (!state) {\n  return {\n    json: {\n      operation: 'sync_to_postgres',\n      success: false,\n      message: 'project_state is required'\n    }\n  };\n}\n\nreturn {\n  json: {\n    ...input,\n    query_params: {\n      project_id: state.project_id || input.project_id,\n      project_name: state.project_name || 'Unknown',\n      session_id: state.session_id || null,\n      current_phase: state.current_phase || 0,\n      phase_status: state.phase_status || 'pending',\n      last_iteration_score: state.last_iteration_score || null,\n      tech_standards_global: JSON.stringify(state.tech_standards_global || []),\n      tech_standards_local: JSON.stringify(state.tech_standards_local || []),\n      total_iterations: state.total_iterations || 0,\n      total_duration_ms: state.total_duration_ms || 0,\n      config: JSON.stringify(state.config || {}),\n      full_state: JSON.stringify(state)\n    }\n  }\n};"
+      },
+      "id": "build-postgres-query",
+      "name": "Build PostgreSQL Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 250]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO project_state (\n  project_id, project_name, session_id, current_phase, phase_status,\n  last_iteration_score, tech_standards_global, tech_standards_local,\n  total_iterations, total_duration_ms, config, full_state\n) VALUES (\n  $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11::jsonb, $12::jsonb\n)\nON CONFLICT (project_id) DO UPDATE SET\n  project_name = EXCLUDED.project_name,\n  session_id = EXCLUDED.session_id,\n  current_phase = EXCLUDED.current_phase,\n  phase_status = EXCLUDED.phase_status,\n  last_iteration_score = EXCLUDED.last_iteration_score,\n  tech_standards_global = EXCLUDED.tech_standards_global,\n  tech_standards_local = EXCLUDED.tech_standards_local,\n  total_iterations = EXCLUDED.total_iterations,\n  total_duration_ms = EXCLUDED.total_duration_ms,\n  config = EXCLUDED.config,\n  full_state = EXCLUDED.full_state,\n  updated_at = NOW()",
+        "options": {
+          "queryParams": "={{ [\n  $json.query_params.project_id,\n  $json.query_params.project_name,\n  $json.query_params.session_id,\n  $json.query_params.current_phase,\n  $json.query_params.phase_status,\n  $json.query_params.last_iteration_score,\n  $json.query_params.tech_standards_global,\n  $json.query_params.tech_standards_local,\n  $json.query_params.total_iterations,\n  $json.query_params.total_duration_ms,\n  $json.query_params.config,\n  $json.query_params.full_state\n] }}"
+        }
+      },
+      "id": "postgres-upsert",
+      "name": "PostgreSQL Upsert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [960, 250],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-cred",
+          "name": "PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build PostgreSQL sync response\nconst input = $input.first().json;\n\nreturn {\n  json: {\n    operation: 'sync_to_postgres',\n    success: true,\n    project_id: input.query_params?.project_id || input.project_id,\n    message: 'Project state synced to PostgreSQL'\n  }\n};"
+      },
+      "id": "postgres-response",
+      "name": "PostgreSQL Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 250]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "mergeByFields": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "merge-output",
+      "name": "Merge Output",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1440, 0]
+    }
+  ],
+  "connections": {
+    "Subworkflow Entry": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Route Operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Operation": {
+      "main": [
+        [
+          {
+            "node": "Build Upload Key",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Download Key",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "S3 List Objects",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build PostgreSQL Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Upload Key": {
+      "main": [
+        [
+          {
+            "node": "S3 Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S3 Upload": {
+      "main": [
+        [
+          {
+            "node": "Upload Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Download Key": {
+      "main": [
+        [
+          {
+            "node": "S3 Download",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S3 Download": {
+      "main": [
+        [
+          {
+            "node": "Download Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S3 List Objects": {
+      "main": [
+        [
+          {
+            "node": "Parse List Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse List Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build PostgreSQL Query": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL Upsert": {
+      "main": [
+        [
+          {
+            "node": "PostgreSQL Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "id": "ai-product-factory",
+      "name": "AI Product Factory"
+    }
+  ],
+  "triggerCount": 0,
+  "pinData": {},
+  "versionId": "1"
+}
