@@ -122,6 +122,13 @@
             "response": {
               "neverError": true
             }
+          },
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
           }
         }
       },
@@ -169,6 +176,13 @@
               "neverError": true,
               "responseFormat": "text"
             }
+          },
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
           }
         }
       },
@@ -206,6 +220,13 @@
               "neverError": true,
               "responseFormat": "text"
             }
+          },
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
           }
         }
       },
@@ -328,6 +349,13 @@
               "neverError": true,
               "responseFormat": "text"
             }
+          },
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "retryInterval": 1000,
+            "shouldRetry": "={{ $response.statusCode >= 500 || $response.statusCode === 429 }}"
           }
         }
       },

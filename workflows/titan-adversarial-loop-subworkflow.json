@@ -2,6 +2,24 @@
   "name": "Titan - Adversarial Agent Loop",
   "nodes": [
     {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [-200, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error Handler - Log workflow errors for centralized handling\n// This node captures any workflow errors and formats them for logging\n\nconst error = $input.first().json;\n\nconst errorDetails = {\n  timestamp: new Date().toISOString(),\n  workflow: 'Titan - Adversarial Agent Loop',\n  error_type: error.execution?.error?.name || 'UnknownError',\n  error_message: error.execution?.error?.message || 'No error message available',\n  error_stack: error.execution?.error?.stack || '',\n  execution_id: error.execution?.id || 'unknown',\n  node_name: error.execution?.lastNodeExecuted || 'unknown',\n  mode: error.execution?.mode || 'unknown',\n  retry_of: error.execution?.retryOf || null,\n  severity: 'ERROR',\n  recoverable: false\n};\n\n// Log to console for n8n logs\nconsole.error('Titan Adversarial Loop Error:', JSON.stringify(errorDetails, null, 2));\n\nreturn {\n  json: errorDetails\n};"
+      },
+      "id": "error-handler",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 400]
+    },
+    {
       "parameters": {
         "workflowInputs": {
           "values": [
@@ -387,14 +405,44 @@
     },
     {
       "parameters": {
-        "jsCode": "// Prepare max iterations output with telemetry\nconst state = $input.first().json;\nconst startTime = new Date(state.start_time || Date.now());\nconst endTime = new Date();\nconst durationMs = endTime - startTime;\n\nreturn {\n  json: {\n    status: 'max_iterations_reached',\n    final_draft: state.draft,\n    final_score: state.score,\n    total_iterations: state.iteration,\n    session_id: state.session_id,\n    message: `Reached maximum iterations (${state.max_iterations}) with score ${state.score}/${state.score_threshold}`,\n    telemetry: {\n      start_time: state.start_time,\n      end_time: endTime.toISOString(),\n      duration_ms: durationMs,\n      duration_formatted: `${Math.floor(durationMs / 60000)}m ${Math.floor((durationMs % 60000) / 1000)}s`,\n      iteration_history: state.iteration_history,\n      final_evaluation: state.evaluation\n    }\n  }\n};"
+        "jsCode": "// Prepare circuit breaker - max iterations reached, prepare for human guidance\nconst state = $input.first().json;\n\n// Extract persistent issues\nconst issues = state.evaluation?.issues || [];\nconst criticalIssues = issues.filter(i => i.severity === 'high' || i.severity === 'critical');\nconst majorIssues = issues.filter(i => i.severity === 'major' || i.severity === 'medium');\n\nconst issuesSummary = [\n  ...criticalIssues.map(i => `[CRITICAL] ${i.issue || i.detail || i.section}`),\n  ...majorIssues.map(i => `[MAJOR] ${i.issue || i.detail || i.section}`)\n].slice(0, 5).join('\\n');\n\nconst escalationMessage = `The draft has gone through ${state.max_iterations} iterations but hasn't reached the quality threshold.\\n\\n**Current Score**: ${state.score}/10 (threshold: ${state.score_threshold})\\n\\n**Persistent Issues**:\\n${issuesSummary || 'See detailed evaluation for issues'}\\n\\n**Options**:\\n1. Accept current version (score: ${state.score})\\n2. Provide specific guidance on issues\\n3. Lower quality threshold\\n4. Start over with different approach`;\n\nconst webhookSuffix = `circuit_breaker_${state.session_id}`;\n\nreturn {\n  json: {\n    ...state,\n    escalation_message: escalationMessage,\n    webhook_suffix: webhookSuffix,\n    status: 'awaiting_human_guidance'\n  }\n};"
       },
-      "id": "output-max-iter",
-      "name": "Max Iterations Output Builder",
+      "id": "circuit-breaker-prep",
+      "name": "Circuit Breaker Prep",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         1920,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {
+          "webhookSuffix": "={{ $json.webhook_suffix }}"
+        }
+      },
+      "id": "wait-for-human",
+      "name": "Wait for Human Guidance",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2140,
+        400
+      ],
+      "webhookId": "titan-circuit-breaker"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process human response to circuit breaker\nconst prevState = $('Circuit Breaker Prep').item.json;\nconst webhookData = $input.first().json;\n\n// Parse user response\n// Expected: { \"action\": \"accept|guidance|lower_threshold|restart\", \"value\": \"...\" }\nconst userAction = webhookData.body?.action || webhookData.action || 'accept';\nconst userValue = webhookData.body?.value || webhookData.value || '';\n\nconst startTime = new Date(prevState.start_time || Date.now());\nconst endTime = new Date();\nconst durationMs = endTime - startTime;\n\nlet result = {\n  status: 'human_decision',\n  final_draft: prevState.draft,\n  final_score: prevState.score,\n  total_iterations: prevState.iteration,\n  session_id: prevState.session_id,\n  human_action: userAction,\n  human_value: userValue,\n  telemetry: {\n    start_time: prevState.start_time,\n    end_time: endTime.toISOString(),\n    duration_ms: durationMs,\n    duration_formatted: `${Math.floor(durationMs / 60000)}m ${Math.floor((durationMs % 60000) / 1000)}s`,\n    iteration_history: prevState.iteration_history,\n    final_evaluation: prevState.evaluation,\n    human_intervention: true\n  }\n};\n\nswitch (userAction) {\n  case 'accept':\n    result.status = 'accepted_by_human';\n    result.message = `Draft accepted by human at score ${prevState.score}/${prevState.score_threshold}`;\n    break;\n  case 'guidance':\n    result.status = 'guidance_provided';\n    result.additional_context = userValue;\n    result.message = 'Human provided additional guidance';\n    break;\n  case 'lower_threshold':\n    const newThreshold = parseInt(userValue) || prevState.score_threshold - 1;\n    result.new_threshold = Math.max(5, newThreshold);\n    result.status = 'threshold_lowered';\n    result.message = `Quality threshold lowered to ${result.new_threshold}`;\n    break;\n  case 'restart':\n    result.status = 'restart_requested';\n    result.message = 'Human requested restart with new approach';\n    break;\n  default:\n    result.status = 'accepted_by_human';\n    result.message = 'Draft accepted (default action)';\n}\n\nreturn { json: result };"
+      },
+      "id": "process-human-response",
+      "name": "Process Human Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2360,
         400
       ]
     },
@@ -413,6 +461,17 @@
     }
   ],
   "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Subworkflow Entry Point": {
       "main": [
         [
@@ -556,7 +615,7 @@
       "main": [
         [
           {
-            "node": "Max Iterations Output Builder",
+            "node": "Circuit Breaker Prep",
             "type": "main",
             "index": 0
           }
@@ -564,6 +623,39 @@
         [
           {
             "node": "Refiner - Draft Improver",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Circuit Breaker Prep": {
+      "main": [
+        [
+          {
+            "node": "Wait for Human Guidance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Human Guidance": {
+      "main": [
+        [
+          {
+            "node": "Process Human Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Human Response": {
+      "main": [
+        [
+          {
+            "node": "Output Aggregator",
             "type": "main",
             "index": 0
           }
@@ -626,17 +718,6 @@
       ]
     },
     "Success Output Builder": {
-      "main": [
-        [
-          {
-            "node": "Output Aggregator",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Max Iterations Output Builder": {
       "main": [
         [
           {

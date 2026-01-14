@@ -28,7 +28,7 @@ This system uses specialized AI agents working together to:
 
 ### Version
 
-Current version: **v2.7.0** (2026-01-14)
+Current version: **v2.8.0** (2026-01-14)
 
 ---
 
@@ -1429,6 +1429,7 @@ Follow the comprehensive testing checklist in `workflows/TESTING_CHECKLIST.md`:
 See `workflows/CONVERSION_SUMMARY.md` for complete change history.
 
 **Recent Versions**:
+- **v2.8.0** (2026-01-14): Added Error Trigger nodes to all adversarial loops, S3 retry configuration, diagnostic audit tooling
 - **v2.7.0** (2026-01-14): S3-only storage migration, removed Google Drive dependency
 - **v2.6.0** (2026-01-14): Batch governance UI (Tech Stack Configurator), Generative UI components
 - **v2.5.0** (2026-01-14): File upload with presigned URLs, drag-and-drop interface

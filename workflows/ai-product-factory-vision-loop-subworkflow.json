@@ -2,6 +2,50 @@
   "name": "AI Product Factory - Vision Adversarial Loop",
   "nodes": [
     {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [-200, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error Handler - Log workflow errors for centralized handling\n// This node captures any workflow errors and formats them for logging\n\nconst error = $input.first().json;\n\nconst errorDetails = {\n  timestamp: new Date().toISOString(),\n  workflow: 'AI Product Factory - Vision Adversarial Loop',\n  error_type: error.execution?.error?.name || 'UnknownError',\n  error_message: error.execution?.error?.message || 'No error message available',\n  error_stack: error.execution?.error?.stack || '',\n  execution_id: error.execution?.id || 'unknown',\n  node_name: error.execution?.lastNodeExecuted || 'unknown',\n  mode: error.execution?.mode || 'unknown',\n  retry_of: error.execution?.retryOf || null,\n  severity: 'ERROR',\n  recoverable: false\n};\n\n// Log to console for n8n logs\nconsole.error('Vision Loop Error:', JSON.stringify(errorDetails, null, 2));\n\nreturn {\n  json: errorDetails\n};"
+      },
+      "id": "error-handler",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 400]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - Decision Logger"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "log_decision",
+            "project_id": "={{ $json.execution_id }}",
+            "session_id": "error_session",
+            "decision_type": "workflow_error",
+            "content": "={{ 'Workflow Error in ' + $json.workflow + ': ' + $json.error_message }}",
+            "metadata": "={{ JSON.stringify($json) }}"
+          }
+        }
+      },
+      "id": "log-error-decision",
+      "name": "Log Error to Decision Log",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [220, 400],
+      "continueOnFail": true
+    },
+    {
       "parameters": {
         "workflowInputs": {
           "values": [
@@ -490,6 +534,28 @@
     }
   ],
   "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Log Error to Decision Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Subworkflow Entry Point": {
       "main": [
         [
