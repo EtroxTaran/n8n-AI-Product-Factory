@@ -1,0 +1,32 @@
+{
+  "name": "ai-product-factory",
+  "version": "2.5.0",
+  "private": true,
+  "description": "AI Product Factory - Multi-agent workflow system for generating Product Vision and Architecture documents",
+  "scripts": {
+    "sync-workflows": "node scripts/sync-workflows.js",
+    "sync-workflows:dry-run": "node scripts/sync-workflows.js --dry-run",
+    "sync-workflows:verbose": "node scripts/sync-workflows.js --verbose",
+    "dev": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "start": "cd frontend && npm run start",
+    "lint": "cd frontend && npm run lint",
+    "typecheck": "cd frontend && npm run typecheck"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/curosr-n8n.git"
+  },
+  "keywords": [
+    "n8n",
+    "workflow",
+    "ai",
+    "product-factory",
+    "document-generation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { createFileRoute, createServerFn } from "@tanstack/react-router";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArtifactList } from "@/components/artifacts/ArtifactList";
 import { ArtifactViewer } from "@/components/artifacts/ArtifactViewer";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { HistoryTimeline } from "@/components/history/HistoryTimeline";
+import { ADRViewer } from "@/components/adr/ADRViewer";
 import {
   getProject,
   getDecisionLogEntries,
@@ -14,13 +16,16 @@ import {
   insertChatMessage,
 } from "@/lib/db";
 import { listProjectArtifacts, getArtifactContent } from "@/lib/s3";
+import { createProjectZip, downloadZip } from "@/lib/export";
 import { sendChatMessage } from "@/lib/n8n";
+import { parseADRs } from "@/types/adr";
 import type { Project } from "@/types/project";
 import type { Artifact } from "@/types/artifact";
 import type { DecisionLogEntry } from "@/types/history";
 import type { ChatMessage } from "@/types/chat";
 import { PHASE_NAMES, STATUS_COLORS } from "@/types/project";
 import { formatDateTime, formatScore, formatDuration } from "@/lib/utils";
+import { Download, Loader2 } from "lucide-react";
 
 const fetchProjectData = createServerFn({ method: "GET" })
   .validator((data: { projectId: string }) => data)
@@ -32,11 +37,25 @@ const fetchProjectData = createServerFn({ method: "GET" })
       getChatMessages(data.projectId),
     ]);
 
+    // Try to fetch decision_log.md content for ADR parsing
+    let decisionLogContent = "";
+    const decisionLogArtifact = (artifacts as Artifact[]).find(
+      (a) => a.name.toLowerCase().includes("decision_log") || a.name.toLowerCase().includes("decision-log")
+    );
+    if (decisionLogArtifact) {
+      try {
+        decisionLogContent = await getArtifactContent(decisionLogArtifact.key);
+      } catch {
+        // Ignore if we can't fetch it
+      }
+    }
+
     return {
       project: project as Project | null,
       artifacts: artifacts as Artifact[],
       history: history as DecisionLogEntry[],
       messages: messages as ChatMessage[],
+      decisionLogContent,
     };
   });
 
@@ -81,6 +100,13 @@ const sendMessage = createServerFn({ method: "POST" })
     return response;
   });
 
+const exportProjectZip = createServerFn({ method: "POST" })
+  .validator((data: { projectId: string; projectName?: string }) => data)
+  .handler(async ({ data }) => {
+    const result = await createProjectZip(data.projectId, data.projectName);
+    return result;
+  });
+
 export const Route = createFileRoute("/projects/$projectId/")({
   loader: async ({ params }) => {
     const data = await fetchProjectData({ data: { projectId: params.projectId } });
@@ -90,7 +116,7 @@ export const Route = createFileRoute("/projects/$projectId/")({
 });
 
 function ProjectDetailPage() {
-  const { project, artifacts, history, messages: initialMessages } =
+  const { project, artifacts, history, messages: initialMessages, decisionLogContent } =
     Route.useLoaderData();
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(
     null
@@ -99,6 +125,10 @@ function ProjectDetailPage() {
   const [isLoadingContent, setIsLoadingContent] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [isSending, setIsSending] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Parse ADRs from decision log
+  const adrs = useMemo(() => parseADRs(decisionLogContent || ""), [decisionLogContent]);
 
   if (!project) {
     return (
@@ -194,6 +224,25 @@ function ProjectDetailPage() {
     URL.revokeObjectURL(url);
   };
 
+  const handleExportAll = async () => {
+    if (isExporting || artifacts.length === 0) return;
+
+    setIsExporting(true);
+    try {
+      const result = await exportProjectZip({
+        data: {
+          projectId: project.project_id,
+          projectName: project.project_name,
+        },
+      });
+      downloadZip(result.data, result.filename);
+    } catch (error) {
+      console.error("Failed to export project:", error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="container py-6">
       {/* Project Header */}
@@ -206,6 +255,19 @@ function ProjectDetailPage() {
             <p className="text-muted-foreground">ID: {project.project_id}</p>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportAll}
+              disabled={isExporting || artifacts.length === 0}
+            >
+              {isExporting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              {isExporting ? "Exporting..." : "Export All"}
+            </Button>
             <Badge
               variant={project.phase_status === "completed" ? "success" : "info"}
             >
@@ -271,6 +333,9 @@ function ProjectDetailPage() {
           <TabsTrigger value="artifacts">
             Artifacts ({artifacts.length})
           </TabsTrigger>
+          <TabsTrigger value="adrs">
+            ADRs ({adrs.length})
+          </TabsTrigger>
           <TabsTrigger value="chat">Chat</TabsTrigger>
           <TabsTrigger value="history">History ({history.length})</TabsTrigger>
         </TabsList>
@@ -293,6 +358,10 @@ function ProjectDetailPage() {
               />
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="adrs" className="space-y-4">
+          <ADRViewer content={decisionLogContent || ""} />
         </TabsContent>
 
         <TabsContent value="chat" className="space-y-4">

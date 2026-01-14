@@ -13,6 +13,8 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.682.0",
     "@aws-sdk/s3-request-presigner": "^3.682.0",
+    "archiver": "^7.0.0",
+    "better-auth": "^1.2.0",
     "@radix-ui/react-avatar": "^1.1.1",
     "@radix-ui/react-dialog": "^1.1.2",
     "@radix-ui/react-dropdown-menu": "^2.1.2",
@@ -39,6 +41,7 @@
     "vinxi": "^0.4.3"
   },
   "devDependencies": {
+    "@types/archiver": "^6.0.0",
     "@types/node": "^22.8.4",
     "@types/pg": "^8.11.10",
     "@types/react": "^18.3.12",
