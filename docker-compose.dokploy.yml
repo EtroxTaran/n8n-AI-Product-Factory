@@ -202,6 +202,7 @@ services:
         condition: service_healthy
     networks:
       - n8n_network
+      - dokploy-network
     # ports removed - Traefik handles routing
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
@@ -213,6 +214,8 @@ services:
 networks:
   n8n_network:
     driver: bridge
+  dokploy-network:
+    external: true
 
 volumes:
   n8n_data_v2:
