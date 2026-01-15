@@ -36,7 +36,7 @@ services:
       # Internal service connections
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_API_KEY=${QDRANT_API_KEY:-}
-      - GRAPHITI_URL=http://graphiti:8080
+      - GRAPHITI_URL=http://graphiti:8000
       - S3_ENDPOINT=http://seaweedfs:8333
       - S3_ACCESS_KEY=${S3_ACCESS_KEY}
       - S3_SECRET_KEY=${S3_SECRET_KEY}
@@ -67,7 +67,7 @@ services:
       - n8n_data_v2:/home/node/.n8n
     # ports removed - Traefik handles routing
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz > /dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz > /dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -111,6 +111,7 @@ services:
       retries: 10
 
   # --- 4. Vector Database (Qdrant) ---
+  # NOTE: Qdrant container doesn't have curl/wget, using bash TCP check
   qdrant:
     image: qdrant/qdrant:v1.16
     restart: unless-stopped
@@ -121,30 +122,37 @@ services:
     volumes:
       - qdrant_data_v2:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/readyz > /dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/6333) > /dev/null 2>&1'"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # --- 5. Knowledge Graph (Graphiti + FalkorDB) ---
+  # NOTE: Uses zepai/knowledge-graph-mcp:standalone with FalkorDB backend
+  # The standalone tag works with external FalkorDB via FALKORDB_URI
+  # Server listens on port 8000 by default
   graphiti:
-    image: zepai/knowledge-graph-mcp:latest
+    image: zepai/knowledge-graph-mcp:standalone
     restart: unless-stopped
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - FALKORDB_URI=redis://falkordb:6379
-      - PORT=8080
+      - FALKORDB_PASSWORD=
+      - FALKORDB_DATABASE=default_db
+      - GRAPHITI_GROUP_ID=main
+      - PORT=8000
     depends_on:
       falkordb:
         condition: service_healthy
     networks:
       - n8n_network
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health > /dev/null 2>&1 || exit 1"]
+      # Container has curl but not wget
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health > /dev/null || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 90s
 
   falkordb:
     image: falkordb/falkordb:latest
@@ -173,7 +181,8 @@ services:
     # ports removed - Traefik handles routing
     healthcheck:
       # Check master port (9333) - S3 port may require auth
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9333/cluster/status > /dev/null 2>&1 || exit 1"]
+      # Use 127.0.0.1 instead of localhost for reliable container binding
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status > /dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       start_period: 30s
@@ -220,7 +229,7 @@ services:
       - dokploy-network
     # ports removed - Traefik handles routing
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health > /dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health > /dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

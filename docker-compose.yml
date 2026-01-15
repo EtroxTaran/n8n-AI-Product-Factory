@@ -49,7 +49,7 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_API_KEY=${QDRANT_API_KEY}
       # Connection to Graphiti MCP (Internal)
-      - GRAPHITI_URL=http://graphiti:8080
+      - GRAPHITI_URL=http://graphiti:8000
       # Connection to SeaweedFS S3 (Internal) - port 8333 is the S3 API
       - S3_ENDPOINT=http://seaweedfs:8333
       - S3_ACCESS_KEY=${S3_ACCESS_KEY}
@@ -97,10 +97,11 @@ services:
         reservations:
           memory: 1G
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5678/healthz"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz > /dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
 
   # --- 2. n8n Databases ---
   postgres:
@@ -151,6 +152,7 @@ services:
       retries: 10
 
   # --- 3. Vector Database (Qdrant) ---
+  # NOTE: Qdrant container doesn't have curl/wget, using bash TCP check
   qdrant:
     image: qdrant/qdrant:v1.16
     restart: unless-stopped
@@ -172,35 +174,44 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6333/readyz"]
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/6333) > /dev/null 2>&1'"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
 
   # --- 4. Temporal Graph RAG (Graphiti + FalkorDB) ---
+  # NOTE: Uses zepai/knowledge-graph-mcp:standalone with FalkorDB backend
+  # The standalone tag works with external FalkorDB via FALKORDB_URI
+  # Server listens on port 8000 by default
   graphiti:
-    image: zepai/knowledge-graph-mcp:latest
+    image: zepai/knowledge-graph-mcp:standalone
     restart: unless-stopped
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - FALKORDB_URI=redis://falkordb:6379
-      - PORT=8080
+      - FALKORDB_PASSWORD=
+      - FALKORDB_DATABASE=default_db
+      - GRAPHITI_GROUP_ID=main
+      - PORT=8000
     depends_on:
-      - falkordb
+      falkordb:
+        condition: service_healthy
     networks:
       - n8n_network
     # SECURITY: Port removed for production - only accessible via internal n8n_network
     # Uncomment for local development/debugging:
     # ports:
-    #   - "8000:8080"
+    #   - "8000:8000"
     expose:
-      - "8080"
+      - "8000"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
-      interval: 30s
+      # Container has curl but not wget
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health > /dev/null || exit 1"]
+      interval: 15s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 90s
 
   falkordb:
     image: falkordb/falkordb:latest
@@ -240,10 +251,13 @@ services:
         reservations:
           memory: 256M
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8888/"]
+      # Check master port (9333) - S3 port (8333) requires auth
+      # Use 127.0.0.1 instead of localhost for reliable container binding
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status > /dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.s3.rule=Host(`s3.${DOMAIN_NAME}`)"
@@ -318,6 +332,8 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
+      - HOST=0.0.0.0
+      - PORT=3000
       - N8N_WEBHOOK_URL=http://n8n:5678/webhook
       # S3 API port is 8333
       - S3_ENDPOINT=http://seaweedfs:8333
@@ -336,7 +352,7 @@ services:
       postgres:
         condition: service_healthy
       n8n:
-        condition: service_started
+        condition: service_healthy
       seaweedfs:
         condition: service_healthy
     networks:
@@ -348,10 +364,11 @@ services:
       - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
       - "traefik.http.services.dashboard.loadbalancer.server.port=3000"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health > /dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
 
 networks:
   n8n_network:
