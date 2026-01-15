@@ -188,7 +188,7 @@ services:
       - S3_BUCKET=${S3_BUCKET:-product-factory-artifacts}
       - S3_ACCESS_KEY=${S3_ACCESS_KEY}
       - S3_SECRET_KEY=${S3_SECRET_KEY}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-n8n}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-n8n}
+      - DATABASE_URL=${DATABASE_URL}
       # Google OAuth
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
