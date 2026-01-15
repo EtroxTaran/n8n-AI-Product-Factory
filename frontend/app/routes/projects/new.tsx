@@ -1,3 +1,10 @@
+/**
+ * New Project Route (Protected)
+ *
+ * This route requires authentication.
+ * Users are redirected to login if not authenticated.
+ */
+
 import { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
@@ -13,10 +20,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { FileUpload } from "@/components/upload/FileUpload";
+import { requireAuth } from "@/lib/auth-guard";
 import { ArrowLeft, Loader2, Rocket } from "lucide-react";
 import type { InputFile } from "@/lib/schemas";
 
 export const Route = createFileRoute("/projects/new")({
+  beforeLoad: async ({ location }) => {
+    // Require authentication before loading this route
+    return requireAuth(location);
+  },
   component: NewProjectPage,
 });
 

@@ -17,11 +17,11 @@ export interface Project {
   artifact_decision_log: string | null;
   total_iterations: number;
   total_duration_ms: number;
-  config: Record<string, unknown>;
+  config: Record<string, object | string | number | boolean | null>;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
-  full_state: Record<string, unknown> | null;
+  full_state: Record<string, object | string | number | boolean | null> | null;
 }
 
 export interface ProjectSummary {

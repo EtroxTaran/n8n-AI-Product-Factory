@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -6,15 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { GovernanceWidget } from "@/components/governance/GovernanceWidget";
-import type { ChatMessage } from "@/types/chat";
-import type { GovernancePayload, GovernanceResponse } from "@/lib/schemas";
+import type { GovernanceResponse, ExtendedChatMessage } from "@/lib/schemas";
 import { GovernancePayloadSchema } from "@/lib/schemas";
 import { cn, formatDateTime } from "@/lib/utils";
-
-interface ExtendedChatMessage extends ChatMessage {
-  message_type?: "text" | "governance_request" | "phase_update";
-  payload?: unknown;
-}
 
 interface ChatWindowProps {
   messages: ExtendedChatMessage[];

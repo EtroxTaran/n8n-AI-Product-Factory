@@ -6,7 +6,7 @@ export interface DecisionLogEntry {
   phase: number | null;
   iteration: number | null;
   content: string | null;
-  metadata: Record<string, unknown>;
+  metadata: Record<string, object | string | number | boolean | null>;
   agent_name: string | null;
   score: number | null;
   issues_count: number | null;

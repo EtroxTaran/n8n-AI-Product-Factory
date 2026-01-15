@@ -1,3 +1,10 @@
+/**
+ * Project Detail Route (Protected)
+ *
+ * This route requires authentication.
+ * Users are redirected to login if not authenticated.
+ */
+
 import { useState, useMemo } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
@@ -19,17 +26,18 @@ import {
 import { listProjectArtifacts, getArtifactContent } from "@/lib/s3";
 import { createProjectZip, downloadZip } from "@/lib/export";
 import { sendChatMessage } from "@/lib/n8n";
+import { requireAuth } from "@/lib/auth-guard";
 import { parseADRs } from "@/types/adr";
 import type { Project } from "@/types/project";
 import type { Artifact } from "@/types/artifact";
 import type { DecisionLogEntry } from "@/types/history";
 import type { ChatMessage } from "@/types/chat";
-import { PHASE_NAMES, STATUS_COLORS } from "@/types/project";
+import { PHASE_NAMES } from "@/types/project";
 import { formatDateTime, formatScore, formatDuration } from "@/lib/utils";
 import { Download, Loader2 } from "lucide-react";
 
 const fetchProjectData = createServerFn({ method: "GET" })
-  .validator((data: { projectId: string }) => data)
+  .inputValidator((data: { projectId: string }) => data)
   .handler(async ({ data }) => {
     const [project, artifacts, history, messages] = await Promise.all([
       getProject(data.projectId),
@@ -41,7 +49,9 @@ const fetchProjectData = createServerFn({ method: "GET" })
     // Try to fetch decision_log.md content for ADR parsing
     let decisionLogContent = "";
     const decisionLogArtifact = (artifacts as Artifact[]).find(
-      (a) => a.name.toLowerCase().includes("decision_log") || a.name.toLowerCase().includes("decision-log")
+      (a) =>
+        a.name.toLowerCase().includes("decision_log") ||
+        a.name.toLowerCase().includes("decision-log")
     );
     if (decisionLogArtifact) {
       try {
@@ -61,14 +71,14 @@ const fetchProjectData = createServerFn({ method: "GET" })
   });
 
 const fetchArtifactContent = createServerFn({ method: "GET" })
-  .validator((data: { key: string }) => data)
+  .inputValidator((data: { key: string }) => data)
   .handler(async ({ data }) => {
     const content = await getArtifactContent(data.key);
     return { content };
   });
 
 const sendMessage = createServerFn({ method: "POST" })
-  .validator(
+  .inputValidator(
     (data: { projectId: string; message: string; sessionId?: string }) => data
   )
   .handler(async ({ data }) => {
@@ -102,23 +112,34 @@ const sendMessage = createServerFn({ method: "POST" })
   });
 
 const exportProjectZip = createServerFn({ method: "POST" })
-  .validator((data: { projectId: string; projectName?: string }) => data)
+  .inputValidator((data: { projectId: string; projectName?: string }) => data)
   .handler(async ({ data }) => {
     const result = await createProjectZip(data.projectId, data.projectName);
     return result;
   });
 
 export const Route = createFileRoute("/projects/$projectId/")({
+  beforeLoad: async ({ location }) => {
+    // Require authentication before loading this route
+    return requireAuth(location);
+  },
   loader: async ({ params }) => {
-    const data = await fetchProjectData({ data: { projectId: params.projectId } });
+    const data = await fetchProjectData({
+      data: { projectId: params.projectId },
+    });
     return data;
   },
   component: ProjectDetailPage,
 });
 
 function ProjectDetailPage() {
-  const { project, artifacts, history, messages: initialMessages, decisionLogContent } =
-    Route.useLoaderData();
+  const {
+    project,
+    artifacts,
+    history,
+    messages: initialMessages,
+    decisionLogContent,
+  } = Route.useLoaderData();
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(
     null
   );
@@ -129,7 +150,10 @@ function ProjectDetailPage() {
   const [isExporting, setIsExporting] = useState(false);
 
   // Parse ADRs from decision log
-  const adrs = useMemo(() => parseADRs(decisionLogContent || ""), [decisionLogContent]);
+  const adrs = useMemo(
+    () => parseADRs(decisionLogContent || ""),
+    [decisionLogContent]
+  );
 
   if (!project) {
     return (
@@ -148,7 +172,9 @@ function ProjectDetailPage() {
     setSelectedArtifact(artifact);
     setIsLoadingContent(true);
     try {
-      const result = await fetchArtifactContent({ data: { key: artifact.key } });
+      const result = await fetchArtifactContent({
+        data: { key: artifact.key },
+      });
       setArtifactContent(result.content);
     } catch (error) {
       console.error("Failed to load artifact:", error);
@@ -334,9 +360,7 @@ function ProjectDetailPage() {
           <TabsTrigger value="artifacts">
             Artifacts ({artifacts.length})
           </TabsTrigger>
-          <TabsTrigger value="adrs">
-            ADRs ({adrs.length})
-          </TabsTrigger>
+          <TabsTrigger value="adrs">ADRs ({adrs.length})</TabsTrigger>
           <TabsTrigger value="chat">Chat</TabsTrigger>
           <TabsTrigger value="history">History ({history.length})</TabsTrigger>
         </TabsList>

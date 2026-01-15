@@ -1,7 +1,15 @@
+/**
+ * Projects List Route (Protected)
+ *
+ * This route requires authentication.
+ * Users are redirected to login if not authenticated.
+ */
+
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { ProjectList } from "@/components/projects/ProjectList";
 import { getProjects } from "@/lib/db";
+import { requireAuth } from "@/lib/auth-guard";
 import type { ProjectSummary } from "@/types/project";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
@@ -12,6 +20,10 @@ const fetchProjects = createServerFn({ method: "GET" }).handler(async () => {
 });
 
 export const Route = createFileRoute("/projects/")({
+  beforeLoad: async ({ location }) => {
+    // Require authentication before loading this route
+    return requireAuth(location);
+  },
   loader: async () => {
     const projects = await fetchProjects();
     return { projects };

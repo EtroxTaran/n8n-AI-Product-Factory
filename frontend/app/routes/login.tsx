@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { getRequest } from "@tanstack/react-start/server";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -11,9 +12,16 @@ import {
 import { signIn } from "@/lib/auth-client";
 import { auth } from "@/lib/auth";
 import { Factory } from "lucide-react";
+import { z } from "zod";
+
+// Search params schema for redirect support
+const loginSearchSchema = z.object({
+  redirect: z.string().optional(),
+});
 
 // Server function to check if user is already authenticated
-const checkAuth = createServerFn({ method: "GET" }).handler(async ({ request }) => {
+const checkAuth = createServerFn({ method: "GET" }).handler(async () => {
+  const request = getRequest();
   const session = await auth.api.getSession({
     headers: request?.headers,
   });
@@ -21,11 +29,13 @@ const checkAuth = createServerFn({ method: "GET" }).handler(async ({ request }) 
 });
 
 export const Route = createFileRoute("/login")({
+  validateSearch: loginSearchSchema,
   // Redirect to projects if already authenticated
-  beforeLoad: async () => {
+  beforeLoad: async ({ search }) => {
     const { isAuthenticated } = await checkAuth();
     if (isAuthenticated) {
-      throw redirect({ to: "/projects" });
+      // Redirect to the original page or projects
+      throw redirect({ to: search.redirect || "/projects" });
     }
   },
   component: LoginPage,
@@ -55,10 +65,12 @@ function GoogleIcon({ className }: { className?: string }) {
 }
 
 function LoginPage() {
+  const { redirect: redirectTo } = Route.useSearch();
+
   const handleGoogleLogin = () => {
     signIn.social({
       provider: "google",
-      callbackURL: "/projects",
+      callbackURL: redirectTo || "/projects",
     });
   };
 

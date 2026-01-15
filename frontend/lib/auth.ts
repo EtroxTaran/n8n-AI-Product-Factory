@@ -54,7 +54,7 @@ export const auth = betterAuth({
 
   // Callbacks for domain restriction
   callbacks: {
-    async signIn({ user }) {
+    async signIn({ user }: { user: { email?: string } }) {
       const allowedDomains = getAllowedDomains();
 
       // If no domains specified, allow all
@@ -80,3 +80,38 @@ export const auth = betterAuth({
 // Export session type for use in components
 export type Session = typeof auth.$Infer.Session;
 export type User = typeof auth.$Infer.Session.user;
+
+/**
+ * Get the current session from request headers
+ * Use this in server functions and beforeLoad hooks
+ */
+export async function getServerSession(
+  headers: Headers | undefined
+): Promise<Session | null> {
+  if (!headers) {
+    return null;
+  }
+
+  try {
+    const session = await auth.api.getSession({ headers });
+    return session;
+  } catch (error) {
+    console.error("Failed to get session:", error);
+    return null;
+  }
+}
+
+/**
+ * Validate that the current request is authenticated
+ * Throws redirect to login if not authenticated
+ */
+export async function requireAuth(headers: Headers | undefined): Promise<Session> {
+  const session = await getServerSession(headers);
+
+  if (!session?.user) {
+    // Return null to indicate auth required - caller handles redirect
+    throw new Error("UNAUTHORIZED");
+  }
+
+  return session;
+}

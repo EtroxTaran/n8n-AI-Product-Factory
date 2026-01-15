@@ -2,7 +2,6 @@ import * as React from "react";
 import {
   Settings2,
   CheckCircle2,
-  XCircle,
   SkipForward,
   Globe,
   FileText,

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import logger from "@/lib/logger";
 
 /**
  * Server-side environment variable validation using Zod
@@ -135,9 +136,9 @@ export const env = {
 if (process.env.NODE_ENV === "production") {
   try {
     getEnv();
-    console.log("✅ Environment validation passed");
+    logger.info("Environment validation passed");
   } catch (error) {
-    console.error(error);
+    logger.error("Environment validation failed", error);
     process.exit(1);
   }
 }

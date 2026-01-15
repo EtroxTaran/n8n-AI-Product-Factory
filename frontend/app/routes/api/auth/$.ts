@@ -1,13 +1,17 @@
-import { createAPIFileRoute } from "@tanstack/react-start/api";
+import { createFileRoute } from "@tanstack/react-router";
 import { auth } from "@/lib/auth";
 
 // Catch-all route for Better-Auth endpoints
 // Handles: /api/auth/signin, /api/auth/signout, /api/auth/callback/google, etc.
-export const APIRoute = createAPIFileRoute("/api/auth/$")({
-  GET: async ({ request }) => {
-    return auth.handler(request);
-  },
-  POST: async ({ request }) => {
-    return auth.handler(request);
+export const Route = createFileRoute("/api/auth/$")({
+  server: {
+    handlers: {
+      GET: async ({ request }) => {
+        return auth.handler(request);
+      },
+      POST: async ({ request }) => {
+        return auth.handler(request);
+      },
+    },
   },
 });

@@ -128,6 +128,8 @@ export const ChatMessageTypeSchema = z.enum([
   "governance_request",
   "phase_update",
   "file_upload_request",
+  "error",
+  "system_notification",
 ]);
 
 export type ChatMessageType = z.infer<typeof ChatMessageTypeSchema>;
@@ -141,7 +143,7 @@ export const ExtendedChatMessageSchema = z.object({
   session_id: z.string().nullable(),
   role: z.enum(["user", "assistant", "system"]),
   content: z.string(),
-  message_type: ChatMessageTypeSchema.optional().default("text"),
+  message_type: ChatMessageTypeSchema.optional(),
   payload: z.unknown().optional().describe("Rich payload for non-text messages"),
   n8n_execution_id: z.string().nullable().optional(),
   response_time_ms: z.number().nullable().optional(),

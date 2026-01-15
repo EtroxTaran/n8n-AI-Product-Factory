@@ -1,9 +1,8 @@
-import { expect, afterEach, vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
-import * as matchers from '@testing-library/jest-dom/matchers';
+import '@testing-library/jest-dom/vitest';
 
-// Extend Vitest's expect with jest-dom matchers
-expect.extend(matchers);
+// Note: @testing-library/jest-dom/vitest auto-extends vitest matchers
 
 // Mock ResizeObserver for Radix UI components
 class ResizeObserverMock {

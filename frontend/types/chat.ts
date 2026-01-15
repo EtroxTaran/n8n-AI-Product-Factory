@@ -1,4 +1,4 @@
-export type ChatMessageType = "text" | "governance_request" | "phase_update";
+export type ChatMessageType = "text" | "governance_request" | "phase_update" | "file_upload_request" | "error" | "system_notification";
 
 export interface ChatMessage {
   id: string;
@@ -7,7 +7,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   message_type?: ChatMessageType;
-  payload?: unknown;
+  payload?: object | string | number | boolean | null;
   n8n_execution_id: string | null;
   response_time_ms: number | null;
   created_at: string;
