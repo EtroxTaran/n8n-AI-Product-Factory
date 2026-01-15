@@ -4,8 +4,13 @@
 # In Dokploy:
 # 1. Create a Compose project
 # 2. Point to this file (or rename to docker-compose.yml)
-# 3. Configure domains in Dokploy's UI for each exposed service
-# 4. Set environment variables in Dokploy
+# 3. Set environment variables in Dokploy (DASHBOARD_DOMAIN, N8N_DOMAIN, S3_DOMAIN, etc.)
+# 4. Deploy - Traefik labels are defined below for each exposed service
+#
+# Required environment variables for domains:
+# - DASHBOARD_DOMAIN: e.g., genosis.etrox.de (frontend dashboard)
+# - N8N_DOMAIN: e.g., n8n-genosis.etrox.de (n8n workflow engine)
+# - S3_DOMAIN: e.g., s3-genosis.etrox.de (SeaweedFS S3 storage)
 
 services:
   # --- 1. Workflow Engine (n8n) ---
@@ -179,6 +184,12 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.genosis-frontend.rule=Host(`${DASHBOARD_DOMAIN}`)"
+      - "traefik.http.routers.genosis-frontend.entrypoints=websecure"
+      - "traefik.http.routers.genosis-frontend.tls.certResolver=letsencrypt"
+      - "traefik.http.services.genosis-frontend.loadbalancer.server.port=3000"
     environment:
       - NODE_ENV=production
       - HOST=0.0.0.0
