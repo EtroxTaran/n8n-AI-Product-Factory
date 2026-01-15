@@ -1,5 +1,5 @@
 # Stage 1: Dependencies
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 
 # Copy package files
@@ -9,7 +9,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 # Stage 2: Builder
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Copy dependencies from deps stage
@@ -20,7 +20,7 @@ COPY . .
 RUN npm run build
 
 # Stage 3: Runner
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -30,7 +30,7 @@ RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 dashboard
 
 # Copy built application
-COPY --from=builder --chown=dashboard:nodejs /app/.output ./.output
+COPY --from=builder --chown=dashboard:nodejs /app/dist ./dist
 COPY --from=builder --chown=dashboard:nodejs /app/package.json ./package.json
 
 USER dashboard
@@ -40,4 +40,4 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["node", ".output/server/index.mjs"]
+CMD ["node", "dist/server/server.js"]
