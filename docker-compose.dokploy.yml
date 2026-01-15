@@ -31,7 +31,7 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_API_KEY=${QDRANT_API_KEY:-}
       - GRAPHITI_URL=http://graphiti:8080
-      - S3_ENDPOINT=http://seaweedfs:8888
+      - S3_ENDPOINT=http://seaweedfs:8333
       - S3_ACCESS_KEY=${S3_ACCESS_KEY}
       - S3_SECRET_KEY=${S3_SECRET_KEY}
       - S3_BUCKET=${S3_BUCKET:-product-factory-artifacts}
@@ -157,7 +157,7 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     restart: unless-stopped
-    command: "server -s3 -dir=/data -ip=seaweedfs -s3.port=8888 -filer=false"
+    command: "server -s3 -dir=/data -s3.port=8333 -filer=false"
     environment:
       - WEED_MASTER_VOLUME_SIZE_LIMIT_MB=100
     networks:
@@ -181,7 +181,7 @@ services:
     environment:
       - NODE_ENV=production
       - N8N_WEBHOOK_URL=http://n8n:5678/webhook
-      - S3_ENDPOINT=http://seaweedfs:8888
+      - S3_ENDPOINT=http://seaweedfs:8333
       - S3_PUBLIC_ENDPOINT=https://${S3_DOMAIN}
       - S3_BUCKET=${S3_BUCKET:-product-factory-artifacts}
       - S3_ACCESS_KEY=${S3_ACCESS_KEY}
