@@ -180,6 +180,8 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
+      - HOST=0.0.0.0
+      - PORT=3000
       - N8N_WEBHOOK_URL=http://n8n:5678/webhook
       - S3_ENDPOINT=http://seaweedfs:8333
       - S3_PUBLIC_ENDPOINT=https://${S3_DOMAIN}
