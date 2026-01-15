@@ -29,8 +29,8 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 dashboard
 
-# Copy built application and package files
-COPY --from=builder --chown=dashboard:nodejs /app/dist ./dist
+# Copy built application (TanStack Start outputs to .output/)
+COPY --from=builder --chown=dashboard:nodejs /app/.output ./.output
 COPY --from=builder --chown=dashboard:nodejs /app/package.json ./package.json
 COPY --from=builder --chown=dashboard:nodejs /app/package-lock.json ./package-lock.json
 
@@ -42,6 +42,7 @@ USER dashboard
 EXPOSE 3000
 
 ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
+ENV HOST="0.0.0.0"
 
-CMD ["node", "dist/server/server.js"]
+# TanStack Start node-server output
+CMD ["node", ".output/server/index.mjs"]
