@@ -29,9 +29,13 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 dashboard
 
-# Copy built application
+# Copy built application and package files
 COPY --from=builder --chown=dashboard:nodejs /app/dist ./dist
 COPY --from=builder --chown=dashboard:nodejs /app/package.json ./package.json
+COPY --from=builder --chown=dashboard:nodejs /app/package-lock.json ./package-lock.json
+
+# Install production dependencies only
+RUN npm ci --omit=dev
 
 USER dashboard
 
