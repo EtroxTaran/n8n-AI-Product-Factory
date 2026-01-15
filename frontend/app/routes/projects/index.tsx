@@ -1,4 +1,5 @@
-import { createFileRoute, createServerFn, Link } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { createServerFn } from "@tanstack/react-start";
 import { ProjectList } from "@/components/projects/ProjectList";
 import { getProjects } from "@/lib/db";
 import type { ProjectSummary } from "@/types/project";

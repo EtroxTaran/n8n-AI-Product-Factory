@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
-import { createFileRoute, createServerFn } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { createServerFn } from "@tanstack/react-start";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

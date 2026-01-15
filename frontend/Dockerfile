@@ -3,10 +3,10 @@ FROM node:20-alpine AS deps
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
+COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm install
+# Install dependencies (ci for reproducible builds)
+RUN npm ci
 
 # Stage 2: Builder
 FROM node:20-alpine AS builder

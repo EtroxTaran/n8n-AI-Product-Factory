@@ -1,4 +1,4 @@
-import { createAPIFileRoute } from "@tanstack/start/api";
+import { createAPIFileRoute } from "@tanstack/react-start/api";
 import { generateUploadUrl, getContentType } from "@/lib/s3";
 import { PresignedUrlRequestSchema } from "@/lib/schemas";
 

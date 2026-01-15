@@ -1,5 +1,5 @@
-import { json } from "@tanstack/react-router";
-import { createAPIFileRoute } from "@tanstack/react-router";
+import { json } from "@tanstack/react-start";
+import { createAPIFileRoute } from "@tanstack/react-start/api";
 import { db } from "@/lib/db";
 import type { InputFile } from "@/lib/schemas";
 
