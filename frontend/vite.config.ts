@@ -13,9 +13,16 @@ export default defineConfig({
       srcDirectory: 'app',
     }),
     // Nitro plugin for Node.js HTTP server output
-    nitroV2Plugin({ preset: 'node-server' }),
+    nitroV2Plugin({
+      preset: 'node-server',
+      compatibilityDate: '2026-01-15',
+    }),
     // React's vite plugin must come after Start's vite plugin
     react(),
     tailwindcss(),
   ],
+  build: {
+    // Suppress chunk size warnings for vendor bundles
+    chunkSizeWarningLimit: 1000,
+  },
 })
