@@ -82,7 +82,7 @@ services:
       - n8n_network
     volumes:
       # PostgreSQL 18+ uses /var/lib/postgresql (not /var/lib/postgresql/data)
-      - postgres_data:/var/lib/postgresql
+      - postgres18_data:/var/lib/postgresql
       - ./init-scripts:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-n8n} -d ${POSTGRES_DB:-n8n}"]
@@ -219,7 +219,7 @@ networks:
 
 volumes:
   n8n_data:
-  postgres_data:
+  postgres18_data:
   redis_data:
   qdrant_data:
   falkordb_data:
