@@ -36,7 +36,7 @@ This system uses specialized AI agents working together to:
 
 ### Version
 
-Current version: **v3.0.0** (2026-01-16)
+Current version: **v3.0.1** (2026-01-16)
 
 ---
 
@@ -1252,6 +1252,122 @@ n8n workflows with AI agents, focusing on monitoring and observability."
 
 ---
 
+## Context Optimization
+
+This section covers techniques to optimize Claude Code's context window, reducing token usage by up to 47% and improving session persistence.
+
+### Environment Variables
+
+Add these to your shell profile (`~/.bashrc`, `~/.zshrc`, or PowerShell profile):
+
+```bash
+# Enable on-demand MCP tool loading (saves ~32k tokens / 47% reduction)
+export ENABLE_EXPERIMENTAL_MCP_CLI=true
+
+# Optional: Increase MCP output token limit (default: 25,000)
+export MAX_MCP_OUTPUT_TOKENS=50000
+```
+
+**Windows PowerShell** (`$PROFILE`):
+```powershell
+$env:ENABLE_EXPERIMENTAL_MCP_CLI = "true"
+$env:MAX_MCP_OUTPUT_TOKENS = "50000"
+```
+
+### The .context/ Folder
+
+This project includes a `.context/` folder for managing context efficiently:
+
+```
+.context/
+├── mcp/           # Large MCP tool responses (>50 lines)
+├── history/       # Session-specific chat logs and decisions
+└── terminal/      # Build/server logs with timestamps
+```
+
+See [.context/README.md](.context/README.md) for detailed usage instructions.
+
+### Managing Large Tool Responses
+
+Any MCP tool response greater than 50 lines should be saved to the `.context/mcp/` folder:
+
+```bash
+# Example: Save large response to file
+echo "$RESPONSE" > .context/mcp/search-results-$(date +%Y%m%d-%H%M%S).md
+```
+
+Reference these files as needed rather than keeping full output in active chat context.
+
+### Maintaining Persistent Chat History
+
+Update a local chat history file after each significant milestone to recover information lost during automatic compaction:
+
+```bash
+# Save session state before /compact or /clear
+# Ask Claude: "Write a summary of our progress to '.context/history/session-YYYY-MM-DD.md'"
+```
+
+Resume later with:
+```bash
+# Ask Claude: "@.context/history/session-2026-01-16.md Let's continue where we left off"
+```
+
+### Terminal Session Logging
+
+Log terminal output to files for targeted searching instead of re-running commands:
+
+```bash
+# Redirect output to timestamped log file
+npm run build 2>&1 | tee .context/terminal/build-$(date +%Y%m%d-%H%M%S).log
+
+# When debugging, search logs instead of re-running:
+grep -i "error" .context/terminal/build-*.log
+
+# Or read only the last 20 lines:
+tail -20 .context/terminal/build-latest.log
+```
+
+### Context Management Commands
+
+| Command | Purpose |
+|---------|---------|
+| `/context` | View current token usage breakdown |
+| `/compact` | Compress conversation history (use proactively at 70% capacity) |
+| `/clear` | Reset context completely (use when switching to unrelated tasks) |
+
+### Context Management Best Practices
+
+1. **Monitor context usage**: Run `/context` regularly to see token breakdown
+2. **Compact at 70%**: Use `/compact` proactively before hitting auto-compaction at 95%
+3. **Clear between tasks**: Use `/clear` when switching to unrelated work
+4. **Use scratchpad files**: Offload plans and decisions to markdown files in `.context/history/`
+5. **Leverage CLAUDE.md**: Add persistent rules here instead of repeating in each session
+
+**Strategic breakpoints for /compact or /clear:**
+- After completing a feature
+- Before starting unrelated work
+- After making a git commit
+- When switching between frontend/backend work
+- When context meter reaches 70%
+
+### Token Savings Summary
+
+| Technique | Token Savings | Notes |
+|-----------|---------------|-------|
+| `ENABLE_EXPERIMENTAL_MCP_CLI=true` | ~32k tokens (47%) | Load MCP tools on-demand |
+| Large MCP responses to files | Variable | Prevent flooding context |
+| Persistent chat history | Recovery | Maintain decisions across compaction |
+| Terminal session logs | Debugging | Search logs instead of re-running |
+
+### Research Sources
+
+- [Claude Code's Hidden MCP Flag](https://paddo.dev/blog/claude-code-hidden-mcp-flag/) - 32k token savings
+- [Managing Claude Code Context](https://mcpcat.io/guides/managing-claude-code-context/) - Best practices
+- [Claude Code MCP Docs](https://code.claude.com/docs/en/mcp) - MAX_MCP_OUTPUT_TOKENS
+- [Anthropic Best Practices](https://www.anthropic.com/engineering/claude-code-best-practices) - /clear usage
+
+---
+
 ## Prerequisites & Dependencies
 
 ### n8n Configuration
@@ -1583,6 +1699,28 @@ The workflow requires at least one input file in S3 storage.
 - All subworkflows now have proper `Merge Output` nodes
 - Re-import workflow files if you have older versions
 - Verify all subworkflows are marked "Active"
+
+### Dashboard/Database Errors
+
+#### Problem: "function is_setup_complete() does not exist"
+
+**Symptoms**: After login, error in console:
+```
+Setup status check failed: error: function is_setup_complete() does not exist
+```
+
+**Root Cause**: PostgreSQL init scripts only run on first database creation. When upgrading from a previous version, the new functions/views from `03-app-settings.sql` are never created.
+
+**Solution**: This was fixed in v3.0.1. The settings module now includes fallback implementations:
+- `isSetupComplete()` falls back to direct `app_settings` table query
+- `isN8nConfigured()` falls back to direct table query
+- `getSetupStatus()` falls back to composed table queries
+
+If you see this error:
+1. **Update to v3.0.1 or later** - The code now handles missing functions gracefully
+2. **Alternative**: Manually run the SQL in `init-scripts/sql-templates/03-app-settings.sql` against your `dashboard` database
+
+The app will now redirect to `/projects` even when functions don't exist, with a debug log message about using the fallback.
 
 ### Performance Issues
 
@@ -4067,6 +4205,7 @@ Follow the comprehensive testing checklist in `workflows/TESTING_CHECKLIST.md`:
 See `workflows/CONVERSION_SUMMARY.md` for complete change history.
 
 **Recent Versions**:
+- **v3.0.1** (2026-01-16): **Resilient Database Queries** - Fix for `is_setup_complete() does not exist` error on database upgrades. Added PostgreSQL error detection helpers (`isPostgresUndefinedFunctionError`, `isPostgresUndefinedTableError`) and fallback implementations that query tables directly when DB functions/views don't exist. 421 tests passing including 32 new settings tests.
 - **v3.0.0** (2026-01-16): **Setup Wizard for n8n Integration** - 6-step guided wizard (`/setup/*` routes), n8n API client for workflow import, encrypted API key storage (AES-256-GCM), settings management (`/settings/n8n`), database schema for app_settings and workflow_registry, 390 tests passing
 - **v2.9.0** (2026-01-15): Frontend UI/UX improvements - route error boundaries (`RouteErrorBoundary`), loading skeletons (`ProjectDetailSkeleton`, `ProjectListSkeleton`, `FormSkeleton`), toast notifications (Sonner), Alert components with variants, AlertDialog for confirmations, `components.json` for shadcn CLI
 - **v2.8.4** (2026-01-15): n8n auto-bootstrap on first deployment (`n8n-entrypoint.sh`), workflow verification in CI/CD, post-deployment verification script

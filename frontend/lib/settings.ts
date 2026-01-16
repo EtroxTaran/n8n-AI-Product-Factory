@@ -11,6 +11,48 @@ import logger from "@/lib/logger";
 
 const log = logger.child({ component: "settings" });
 
+// ============================================
+// PostgreSQL Error Detection Helpers
+// ============================================
+
+/**
+ * Check if an error is a PostgreSQL "undefined function" error.
+ * PostgreSQL error code 42883 = undefined_function
+ */
+function isPostgresUndefinedFunctionError(error: unknown): boolean {
+  if (error && typeof error === "object") {
+    const pgError = error as { code?: string; message?: string };
+    // PostgreSQL error code for undefined_function
+    if (pgError.code === "42883") return true;
+    // Also check message for the pattern (in case code isn't available)
+    if (
+      pgError.message?.includes("function") &&
+      pgError.message?.includes("does not exist")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check if an error is a PostgreSQL "undefined table/view" error.
+ * PostgreSQL error code 42P01 = undefined_table
+ */
+function isPostgresUndefinedTableError(error: unknown): boolean {
+  if (error && typeof error === "object") {
+    const pgError = error as { code?: string; message?: string };
+    if (pgError.code === "42P01") return true;
+    if (
+      pgError.message?.includes("relation") &&
+      pgError.message?.includes("does not exist")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Type definitions
 export interface Setting {
   id: string;
@@ -243,17 +285,148 @@ export async function getSettingForDisplay(
 }
 
 // ============================================
+// Fallback Implementations for Missing DB Functions
+// ============================================
+// These functions query tables directly when PostgreSQL functions don't exist
+// (e.g., when upgrading from a version before the setup wizard was added)
+
+/**
+ * Fallback for isSetupComplete when is_setup_complete() function doesn't exist.
+ * Queries app_settings table directly.
+ */
+async function isSetupCompleteFallback(): Promise<boolean> {
+  try {
+    const row = await queryOne<{ setting_value: string }>(
+      "SELECT setting_value FROM app_settings WHERE setting_key = $1",
+      ["setup.wizard_completed"]
+    );
+    if (!row) return false;
+
+    // JSONB value could be stored as "true" or true
+    const value = JSON.parse(row.setting_value);
+    return value === true;
+  } catch (tableError) {
+    // Table doesn't exist either - fresh deployment needs migration
+    if (isPostgresUndefinedTableError(tableError)) {
+      log.warn("app_settings table not found - setup not complete");
+      return false;
+    }
+    throw tableError;
+  }
+}
+
+/**
+ * Fallback for isN8nConfigured when is_n8n_configured() function doesn't exist.
+ * Queries app_settings table directly.
+ */
+async function isN8nConfiguredFallback(): Promise<boolean> {
+  try {
+    const rows = await query<{ setting_key: string; setting_value: string }>(
+      `SELECT setting_key, setting_value FROM app_settings
+       WHERE setting_key IN ($1, $2)`,
+      ["n8n.api_url", "n8n.api_key"]
+    );
+
+    if (rows.length < 2) return false;
+
+    const urlRow = rows.find((r) => r.setting_key === "n8n.api_url");
+    const keyRow = rows.find((r) => r.setting_key === "n8n.api_key");
+
+    if (!urlRow || !keyRow) return false;
+
+    // Check values are not empty
+    const urlValue = JSON.parse(urlRow.setting_value);
+    const keyValue = JSON.parse(keyRow.setting_value);
+
+    return Boolean(urlValue && urlValue !== "" && keyValue && keyValue !== "");
+  } catch (tableError) {
+    if (isPostgresUndefinedTableError(tableError)) {
+      log.warn("app_settings table not found - n8n not configured");
+      return false;
+    }
+    throw tableError;
+  }
+}
+
+/**
+ * Fallback for getSetupStatus when setup_status view doesn't exist.
+ * Queries tables directly and composes the result.
+ */
+async function getSetupStatusFallback(): Promise<{
+  n8n_configured: boolean;
+  wizard_completed: boolean;
+  workflows_imported: string;
+  workflows_total: string;
+}> {
+  try {
+    // Get n8n configuration status
+    const n8nConfigured = await isN8nConfiguredFallback();
+
+    // Get wizard completion status
+    const wizardCompleted = await isSetupCompleteFallback();
+
+    // Get workflow counts from workflow_registry
+    let workflowsImported = "0";
+    let workflowsTotal = "0";
+
+    try {
+      const countResult = await queryOne<{ imported: string; total: string }>(`
+        SELECT
+          COUNT(*) FILTER (WHERE import_status = 'imported')::text AS imported,
+          COUNT(*)::text AS total
+        FROM workflow_registry
+      `);
+
+      if (countResult) {
+        workflowsImported = countResult.imported;
+        workflowsTotal = countResult.total;
+      }
+    } catch (workflowError) {
+      // workflow_registry may not exist - that's okay
+      if (!isPostgresUndefinedTableError(workflowError)) {
+        throw workflowError;
+      }
+    }
+
+    return {
+      n8n_configured: n8nConfigured,
+      wizard_completed: wizardCompleted,
+      workflows_imported: workflowsImported,
+      workflows_total: workflowsTotal,
+    };
+  } catch (error) {
+    log.error("getSetupStatusFallback failed", { error });
+    // Return safe defaults
+    return {
+      n8n_configured: false,
+      wizard_completed: false,
+      workflows_imported: "0",
+      workflows_total: "0",
+    };
+  }
+}
+
+// ============================================
 // n8n-specific helpers
 // ============================================
 
 /**
  * Check if n8n is configured (has both URL and API key).
+ * Uses database function if available, falls back to direct query.
  */
 export async function isN8nConfigured(): Promise<boolean> {
-  const result = await queryOne<{ configured: boolean }>(
-    "SELECT is_n8n_configured() as configured"
-  );
-  return result?.configured ?? false;
+  try {
+    const result = await queryOne<{ configured: boolean }>(
+      "SELECT is_n8n_configured() as configured"
+    );
+    return result?.configured ?? false;
+  } catch (error) {
+    if (isPostgresUndefinedFunctionError(error)) {
+      log.debug("is_n8n_configured() function not found, using fallback");
+      return await isN8nConfiguredFallback();
+    }
+    throw error;
+  }
 }
 
 /**
@@ -355,10 +528,18 @@ export async function clearN8nConfig(): Promise<void> {
  * Check if setup wizard has been completed.
  */
 export async function isSetupComplete(): Promise<boolean> {
-  const result = await queryOne<{ complete: boolean }>(
-    "SELECT is_setup_complete() as complete"
-  );
-  return result?.complete ?? false;
+  try {
+    const result = await queryOne<{ complete: boolean }>(
+      "SELECT is_setup_complete() as complete"
+    );
+    return result?.complete ?? false;
+  } catch (error) {
+    if (isPostgresUndefinedFunctionError(error)) {
+      log.debug("is_setup_complete() function not found, using fallback");
+      return await isSetupCompleteFallback();
+    }
+    throw error;
+  }
 }
 
 /**
@@ -418,18 +599,52 @@ export async function getSetupStatus(): Promise<{
   workflowsTotal: number;
   lastHealthCheck: { timestamp: string; healthy: boolean } | null;
 }> {
-  // Use the database view for efficient querying
-  const status = await queryOne<{
+  let status: {
     n8n_configured: boolean;
     wizard_completed: boolean;
     workflows_imported: string;
     workflows_total: string;
-  }>("SELECT * FROM setup_status");
+  } | null = null;
 
-  const skipped = await getSetting<boolean>("setup.wizard_skipped");
-  const healthCheck = await getSetting<{ timestamp: string; healthy: boolean }>(
-    "n8n.last_health_check"
-  );
+  try {
+    // Try to use the optimized view
+    status = await queryOne<{
+      n8n_configured: boolean;
+      wizard_completed: boolean;
+      workflows_imported: string;
+      workflows_total: string;
+    }>("SELECT * FROM setup_status");
+  } catch (error) {
+    if (isPostgresUndefinedTableError(error)) {
+      log.debug("setup_status view not found, using fallback");
+      status = await getSetupStatusFallback();
+    } else {
+      throw error;
+    }
+  }
+
+  let skipped: boolean | null = null;
+  let healthCheck: { timestamp: string; healthy: boolean } | null = null;
+
+  try {
+    skipped = await getSetting<boolean>("setup.wizard_skipped");
+  } catch (error) {
+    if (!isPostgresUndefinedTableError(error)) {
+      throw error;
+    }
+    // Table doesn't exist - skipped is false
+  }
+
+  try {
+    healthCheck = await getSetting<{ timestamp: string; healthy: boolean }>(
+      "n8n.last_health_check"
+    );
+  } catch (error) {
+    if (!isPostgresUndefinedTableError(error)) {
+      throw error;
+    }
+    // Table doesn't exist - no health check
+  }
 
   return {
     wizardCompleted: status?.wizard_completed ?? false,
