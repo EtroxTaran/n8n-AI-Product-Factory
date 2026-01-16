@@ -7,6 +7,8 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { Header } from "@/components/layout/Header";
+import { RouteErrorBoundary, NotFound } from "@/components/error/RouteErrorBoundary";
+import { Toaster } from "@/components/ui/sonner";
 import { getQueryClient } from "@/lib/query-client";
 import "@/styles/globals.css";
 
@@ -20,6 +22,8 @@ export interface RouterContext {
 
 export const Route = createRootRouteWithContext<RouterContext>()({
   component: RootComponent,
+  errorComponent: RouteErrorBoundary,
+  notFoundComponent: NotFound,
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -48,6 +52,7 @@ function RootComponent() {
               <Outlet />
             </main>
           </div>
+          <Toaster />
           <Scripts />
         </body>
       </html>

@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { UserMenu } from "@/components/auth/UserMenu";
-import { Factory } from "lucide-react";
+import { Factory, Settings } from "lucide-react";
 
 export function Header() {
   return (
@@ -20,6 +20,12 @@ export function Header() {
             <Link to="/projects">
               <Button variant="ghost" size="sm">
                 Projects
+              </Button>
+            </Link>
+            <Link to="/settings">
+              <Button variant="ghost" size="sm">
+                <Settings className="h-4 w-4 mr-2" />
+                Settings
               </Button>
             </Link>
           </nav>

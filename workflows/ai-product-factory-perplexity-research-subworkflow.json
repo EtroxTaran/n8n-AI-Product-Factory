@@ -160,7 +160,7 @@
     "templateCredsSetupCompleted": true,
     "instanceId": "ai-product-factory"
   },
-  "id": "ai-product-factory-perplexity-research",
+  "id": "pf-perplexity-research",
   "tags": [
     {
       "id": "ai-product-factory",

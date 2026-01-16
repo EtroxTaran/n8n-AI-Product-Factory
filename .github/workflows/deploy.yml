@@ -116,3 +116,56 @@ jobs:
             exit 1
           fi
         continue-on-error: true
+
+  # Job 5: Verify Workflows are Imported
+  verify-workflows:
+    name: Verify Workflows
+    runs-on: ubuntu-latest
+    needs: [health-check]
+    if: ${{ !inputs.sync_only && secrets.N8N_API_URL != '' && secrets.N8N_API_KEY != '' }}
+    steps:
+      - name: Wait for workflow import
+        run: |
+          echo "Waiting for n8n workflow auto-import to complete..."
+          sleep 30
+
+      - name: Check workflow availability
+        run: |
+          response=$(curl -s "${{ secrets.N8N_API_URL }}/api/v1/workflows" \
+            -H "X-N8N-API-KEY: ${{ secrets.N8N_API_KEY }}" \
+            --max-time 30)
+
+          workflow_count=$(echo "$response" | grep -o '"id"' | wc -l)
+          echo "Found $workflow_count workflows in n8n"
+
+          if [ "$workflow_count" -ge 5 ]; then
+            echo "Workflow import successful!"
+          elif [ "$workflow_count" -gt 0 ]; then
+            echo "Warning: Only $workflow_count workflows found (expected >= 5)"
+            echo "Some workflows may need manual import or credential setup"
+          else
+            echo "Error: No workflows found - import may have failed"
+            echo "Check n8n logs: docker compose logs n8n"
+            exit 1
+          fi
+
+      - name: Verify critical workflows
+        run: |
+          response=$(curl -s "${{ secrets.N8N_API_URL }}/api/v1/workflows" \
+            -H "X-N8N-API-KEY: ${{ secrets.N8N_API_KEY }}" \
+            --max-time 30)
+
+          # Check for API workflow (critical for dashboard)
+          if echo "$response" | grep -q '"name":"AI Product Factory - API"'; then
+            echo "API workflow found"
+          else
+            echo "Warning: API workflow not found"
+          fi
+
+          # Check for Main Orchestrator
+          if echo "$response" | grep -q '"name":"AI Product Factory - Main Orchestrator"'; then
+            echo "Main Orchestrator workflow found"
+          else
+            echo "Warning: Main Orchestrator workflow not found"
+          fi
+        continue-on-error: true

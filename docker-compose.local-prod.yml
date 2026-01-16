@@ -1,19 +1,52 @@
-# AI Product Factory - Dokploy Deployment
-# Use this file when deploying to Dokploy (which handles SSL/routing)
+# AI Product Factory - Local Production-Parity Testing Environment
+# ================================================================
+# This file mirrors docker-compose.dokploy.yml exactly, with local Traefik
+# to simulate Dokploy's external reverse proxy routing.
 #
-# In Dokploy:
-# 1. Create a Compose project
-# 2. Point to this file (or rename to docker-compose.yml)
-# 3. Set environment variables in Dokploy (DASHBOARD_DOMAIN, N8N_DOMAIN, S3_DOMAIN, etc.)
-# 4. Deploy - Traefik labels are defined below for each exposed service
+# Usage:
+#   docker compose -f docker-compose.local-prod.yml up -d
+#   docker compose -f docker-compose.local-prod.yml ps
+#   docker compose -f docker-compose.local-prod.yml down -v
 #
-# Required environment variables for domains:
-# - DASHBOARD_DOMAIN: e.g., genosis.etrox.de (frontend dashboard)
-# - N8N_DOMAIN: e.g., n8n-genosis.etrox.de (n8n workflow engine)
-# - S3_DOMAIN: e.g., s3-genosis.etrox.de (SeaweedFS S3 storage)
+# Access services:
+#   - Traefik Dashboard: http://localhost:8080
+#   - n8n: http://n8n.localhost
+#   - Dashboard: http://dashboard.localhost
+#   - S3: http://s3.localhost
+#
+# NOTE: .localhost domains auto-resolve to 127.0.0.1 in modern browsers
 
 services:
+  # --- 0. Reverse Proxy (Traefik) ---
+  # Simulates Dokploy's external Traefik for local testing
+  traefik:
+    image: traefik:v3.6.7
+    restart: unless-stopped
+    command:
+      - "--api.insecure=true"  # Dashboard enabled for debugging
+      - "--ping=true"  # Enable ping endpoint for health checks
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      # No HTTPS/Let's Encrypt for local testing
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - n8n_network
+      - dokploy-network-local
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ping > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   # --- 1. Workflow Engine (n8n) ---
+  # Matches docker-compose.dokploy.yml exactly
   # Auto-imports workflows on first boot via custom entrypoint
   n8n:
     image: docker.n8n.io/n8nio/n8n:next
@@ -25,23 +58,23 @@ services:
       - DB_POSTGRESDB_PORT=5432
       - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-n8n}
       - DB_POSTGRESDB_USER=${POSTGRES_USER:-n8n}
-      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-n8n_secret_password}
-      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
-      - N8N_HOST=${N8N_DOMAIN}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-n8n_test_password}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-test-encryption-key-32chars!!!}
+      - N8N_HOST=n8n.localhost
       - N8N_PORT=5678
-      - N8N_PROTOCOL=https
-      - N8N_PROXY_HOPS=1
+      - N8N_PROTOCOL=http
+      - N8N_PROXY_HOPS=1  # Important: matches Dokploy config
       - NODE_ENV=production
-      - WEBHOOK_URL=https://${N8N_DOMAIN}/
-      - N8N_WEBHOOK_BASE_URL=https://${N8N_DOMAIN}
+      - WEBHOOK_URL=http://n8n.localhost/
+      - N8N_WEBHOOK_BASE_URL=http://n8n.localhost
       - GENERIC_TIMEZONE=${TIMEZONE:-Europe/Berlin}
       # Internal service connections
       - QDRANT_URL=http://qdrant:6333
       - QDRANT_API_KEY=${QDRANT_API_KEY:-}
       - GRAPHITI_URL=http://graphiti:8000
       - S3_ENDPOINT=http://seaweedfs:8333
-      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
-      - S3_SECRET_KEY=${S3_SECRET_KEY}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-admin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-admin123}
       - S3_BUCKET=${S3_BUCKET:-product-factory-artifacts}
       # AI Factory Config
       - FACTORY_MAX_ITERATIONS=${FACTORY_MAX_ITERATIONS:-5}
@@ -60,16 +93,20 @@ services:
       redis:
         condition: service_healthy
       qdrant:
-        condition: service_started
+        condition: service_started  # Matches Dokploy (not service_healthy)
       seaweedfs:
         condition: service_healthy
     networks:
       - n8n_network
     volumes:
-      - n8n_data_v2:/home/node/.n8n
+      - n8n_data_local:/home/node/.n8n
       - ./workflows:/workflows:ro                        # Workflow JSON files for auto-import
       - ./scripts/n8n-entrypoint.sh:/n8n-entrypoint.sh:ro  # Custom bootstrap script
-    # ports removed - Traefik handles routing
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.n8n.rule=Host(`n8n.localhost`)"
+      - "traefik.http.routers.n8n.entrypoints=web"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz > /dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -78,20 +115,20 @@ services:
       start_period: 30s
 
   # --- 2. PostgreSQL Database ---
-  # IMPORTANT: PostgreSQL 18 uses new PGDATA structure: /var/lib/postgresql/18/docker
-  # Volume must be deleted and recreated when upgrading from v16/v17 to v18
+  # IMPORTANT: PostgreSQL 18 uses new PGDATA structure: /var/lib/postgresql
+  # This matches docker-compose.dokploy.yml exactly
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-n8n}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-n8n_secret_password}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-n8n_test_password}
       - POSTGRES_DB=${POSTGRES_DB:-n8n}
     networks:
       - n8n_network
     volumes:
       # PostgreSQL 18+ uses /var/lib/postgresql (not /var/lib/postgresql/data)
-      - postgres18_data:/var/lib/postgresql
+      - postgres18_data_local:/var/lib/postgresql
       - ./init-scripts:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-n8n} -d ${POSTGRES_DB:-n8n}"]
@@ -101,13 +138,14 @@ services:
       start_period: 30s
 
   # --- 3. Redis Cache ---
+  # Matches Dokploy: no authentication (simpler for local testing)
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
     networks:
       - n8n_network
     volumes:
-      - redis_data_v2:/data
+      - redis_data_local:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -124,7 +162,7 @@ services:
     networks:
       - n8n_network
     volumes:
-      - qdrant_data_v2:/qdrant/storage
+      - qdrant_data_local:/qdrant/storage
     healthcheck:
       test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/6333) > /dev/null 2>&1'"]
       interval: 10s
@@ -134,12 +172,11 @@ services:
   # --- 5. Knowledge Graph (Graphiti + FalkorDB) ---
   # NOTE: Uses zepai/knowledge-graph-mcp:standalone with FalkorDB backend
   # The standalone tag works with external FalkorDB via FALKORDB_URI
-  # Server listens on port 8000 by default
   graphiti:
     image: zepai/knowledge-graph-mcp:standalone
     restart: unless-stopped
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-test-key-not-used-for-healthcheck}
       - FALKORDB_URI=redis://falkordb:6379
       - FALKORDB_PASSWORD=
       - FALKORDB_DATABASE=default_db
@@ -164,7 +201,7 @@ services:
     networks:
       - n8n_network
     volumes:
-      - falkordb_data_v2:/data
+      - falkordb_data_local:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -172,6 +209,7 @@ services:
       retries: 10
 
   # --- 6. S3-Compatible Storage (SeaweedFS) ---
+  # Matches Dokploy: simple command, no entrypoint script
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     restart: unless-stopped
@@ -181,48 +219,45 @@ services:
     networks:
       - n8n_network
     volumes:
-      - seaweedfs_data_v2:/data
-    # ports removed - Traefik handles routing
+      - seaweedfs_data_local:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.s3.rule=Host(`s3.localhost`)"
+      - "traefik.http.routers.s3.entrypoints=web"
+      - "traefik.http.services.s3.loadbalancer.server.port=8333"
     healthcheck:
       # Check master port (9333) - S3 port may require auth
       # Use 127.0.0.1 instead of localhost for reliable container binding
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status > /dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
-      start_period: 30s
       retries: 5
+      start_period: 30s
 
   # --- 7. Frontend Dashboard ---
+  # Matches Dokploy configuration
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     restart: unless-stopped
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.genosis-frontend.rule=Host(`${DASHBOARD_DOMAIN}`)"
-      - "traefik.http.routers.genosis-frontend.entrypoints=websecure"
-      - "traefik.http.routers.genosis-frontend.tls.certResolver=letsencrypt"
-      - "traefik.http.services.genosis-frontend.loadbalancer.server.port=3000"
     environment:
       - NODE_ENV=production
       - HOST=0.0.0.0
       - PORT=3000
       - N8N_WEBHOOK_URL=http://n8n:5678/webhook
       - S3_ENDPOINT=http://seaweedfs:8333
-      - S3_PUBLIC_ENDPOINT=https://${S3_DOMAIN}
+      - S3_PUBLIC_ENDPOINT=http://s3.localhost
       - S3_BUCKET=${S3_BUCKET:-product-factory-artifacts}
-      - S3_ACCESS_KEY=${S3_ACCESS_KEY}
-      - S3_SECRET_KEY=${S3_SECRET_KEY}
-      # IMPORTANT: DATABASE_URL should point to 'dashboard' database, not 'n8n' database
-      # Example: postgresql://user:pass@postgres:5432/dashboard
-      # This avoids table name collisions with n8n's user management tables
-      - DATABASE_URL=${DATABASE_URL}
-      # Google OAuth
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - AUTH_SECRET=${AUTH_SECRET}
-      - AUTH_URL=https://${DASHBOARD_DOMAIN}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-admin}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-admin123}
+      # Use 'dashboard' database for Better-Auth tables (separate from n8n's 'n8n' database)
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-n8n}:${POSTGRES_PASSWORD:-n8n_test_password}@postgres:5432/dashboard
+      # Auth config (Google OAuth disabled for local testing)
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - AUTH_SECRET=${AUTH_SECRET:-test-auth-secret-32-characters!!}
+      - AUTH_URL=http://dashboard.localhost
       - ALLOWED_EMAIL_DOMAINS=${ALLOWED_EMAIL_DOMAINS:-}
     depends_on:
       postgres:
@@ -233,8 +268,12 @@ services:
         condition: service_healthy
     networks:
       - n8n_network
-      - dokploy-network
-    # ports removed - Traefik handles routing
+      - dokploy-network-local  # Simulates Dokploy external network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`dashboard.localhost`)"
+      - "traefik.http.routers.dashboard.entrypoints=web"
+      - "traefik.http.services.dashboard.loadbalancer.server.port=3000"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health > /dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -245,13 +284,15 @@ services:
 networks:
   n8n_network:
     driver: bridge
-  dokploy-network:
-    external: true
+  # Simulates Dokploy's external network
+  dokploy-network-local:
+    driver: bridge
 
 volumes:
-  n8n_data_v2:
-  postgres18_data:
-  redis_data_v2:
-  qdrant_data_v2:
-  falkordb_data_v2:
-  seaweedfs_data_v2:
+  # All volumes use _local suffix to avoid conflicts with other compose files
+  n8n_data_local:
+  postgres18_data_local:
+  redis_data_local:
+  qdrant_data_local:
+  falkordb_data_local:
+  seaweedfs_data_local:

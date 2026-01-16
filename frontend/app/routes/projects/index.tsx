@@ -10,6 +10,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { ProjectList } from "@/components/projects/ProjectList";
 import { getProjects } from "@/lib/db";
 import { requireAuth } from "@/lib/auth-guard";
+import { RouteErrorBoundary } from "@/components/error/RouteErrorBoundary";
+import { ProjectListSkeleton } from "@/components/loading/RouteLoadingSpinner";
 import type { ProjectSummary } from "@/types/project";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
@@ -29,6 +31,10 @@ export const Route = createFileRoute("/projects/")({
     return { projects };
   },
   component: ProjectsPage,
+  errorComponent: RouteErrorBoundary,
+  pendingComponent: ProjectListSkeleton,
+  pendingMs: 200,
+  pendingMinMs: 300,
 });
 
 function ProjectsPage() {

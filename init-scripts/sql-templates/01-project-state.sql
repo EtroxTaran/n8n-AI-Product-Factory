@@ -1,6 +1,9 @@
 -- ============================================
--- AI Product Factory - Database Schema
--- Version: 1.0.0
+-- AI Product Factory - Dashboard Database Schema
+-- Version: 1.1.0
+-- ============================================
+-- This script creates tables in the DASHBOARD database,
+-- NOT the n8n database. It runs via the shell wrapper script.
 -- ============================================
 
 -- Enable required extensions

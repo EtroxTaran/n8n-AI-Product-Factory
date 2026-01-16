@@ -41,8 +41,14 @@ COPY --from=builder --chown=dashboard:nodejs /app/.output ./.output
 COPY --from=builder --chown=dashboard:nodejs /app/package.json ./package.json
 COPY --from=builder --chown=dashboard:nodejs /app/package-lock.json ./package-lock.json
 
+# Copy migration script and entrypoint
+COPY --from=builder --chown=dashboard:nodejs /app/scripts ./scripts
+COPY --chown=dashboard:nodejs docker-entrypoint.sh ./docker-entrypoint.sh
+
 # Install production dependencies only (suppress deprecation warnings)
-RUN npm ci --omit=dev --loglevel=error
+# Make entrypoint executable
+RUN npm ci --omit=dev --loglevel=error && \
+    chmod +x ./docker-entrypoint.sh
 
 USER dashboard
 
@@ -51,5 +57,5 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOST="0.0.0.0"
 
-# TanStack Start node-server output
-CMD ["node", ".output/server/index.mjs"]
+# Use entrypoint for automatic migrations on startup
+ENTRYPOINT ["./docker-entrypoint.sh"]

@@ -27,10 +27,16 @@ This system uses specialized AI agents working together to:
 - **CI/CD Pipeline**: GitHub Actions for automated workflow sync and deployment
 - **Observability**: Structured JSON logging with correlation IDs for distributed tracing
 - **Resilient APIs**: Retry logic with exponential backoff and comprehensive error handling
+- **Production Parity Testing**: Local environment that mirrors Dokploy deployment for pre-deployment validation
+- **Auto-Bootstrap**: Automatic workflow import on first deployment with idempotent restart handling
+- **Route Error Boundaries**: Graceful error handling with retry, navigation options, and dev-mode stack traces
+- **Loading Skeletons**: Smooth route transitions with contextual skeleton loaders
+- **Toast Notifications**: User feedback via Sonner for success/error states across all operations
+- **Setup Wizard**: 6-step guided wizard for n8n integration configuration with workflow import and webhook detection
 
 ### Version
 
-Current version: **v2.8.2** (2026-01-15)
+Current version: **v3.0.0** (2026-01-16)
 
 ---
 
@@ -1868,7 +1874,14 @@ Do you have a valid Python installation available on your path?
 ✅ Dashboard accessible at https://dashboard.yourdomain.com/api/health
 ✅ S3 bucket created and accessible
 ✅ Google OAuth login works
-✅ Workflows synced to n8n
+✅ Workflows auto-imported by n8n-entrypoint.sh (check logs: docker compose logs n8n)
+
+## First-Time Credential Setup (10-15 min)
+✅ Create OpenRouter API credential in n8n UI
+✅ Create OpenAI API Header credential (for embeddings)
+✅ Create Zep Api account credential (for memory)
+✅ Re-link credentials in each workflow
+✅ Activate critical workflows (API, Main Orchestrator)
 ```
 
 ---
@@ -2075,8 +2088,11 @@ The frontend dashboard provides a web-based interface for managing AI Product Fa
 |------------|---------|
 | **TanStack Start** | Full-stack React framework with SSR |
 | **Better-Auth** | Google OAuth authentication |
-| **Shadcn UI** | Component library |
+| **Shadcn UI** | Component library (16+ components) |
 | **TanStack Query** | Data fetching and caching |
+| **Sonner** | Toast notifications with theme integration |
+| **React Hook Form** | Form state management with validation |
+| **Radix UI** | Accessible primitives (AlertDialog, etc.) |
 | **PostgreSQL** | Project state storage |
 | **SeaweedFS** | S3-compatible artifact storage |
 
@@ -2105,6 +2121,176 @@ The frontend dashboard provides a web-based interface for managing AI Product Fa
 - Filtering by title, ID, or status
 - Status badges (proposed, accepted, deprecated, superseded)
 
+#### Setup Wizard (n8n Integration)
+
+A 6-step guided wizard for configuring n8n integration after fresh deployment.
+
+**Problem Solved**: After a fresh Dokploy deployment, users need to configure n8n integration manually. The previous auto-bootstrap approach had issues with workflow ID length limits and credential references not existing in fresh n8n instances.
+
+**Architecture Overview**:
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  User-Driven Setup Flow                                          │
+├─────────────────────────────────────────────────────────────────┤
+│  1. User deploys with Dokploy → All services start               │
+│  2. User logs in → App checks: is n8n configured?                │
+│  3. If NO → Redirect to /setup/welcome                           │
+│  4. Setup Wizard guides through 6 steps                          │
+│  5. Settings Page available post-setup for management            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Wizard Steps**:
+
+| Step | Route | Purpose |
+|------|-------|---------|
+| 1. Welcome | `/setup/welcome` | Overview and prerequisites check |
+| 2. Connect | `/setup/connect` | Enter n8n URL + API key with connection test |
+| 3. Import | `/setup/import` | Import workflows via n8n REST API with progress |
+| 4. Webhooks | `/setup/webhooks` | Auto-detect and display webhook URLs |
+| 5. Verify | `/setup/verify` | Test all connections and verify health |
+| 6. Complete | `/setup/complete` | Success summary and next steps |
+
+**Workflow Import Order** (dependencies first):
+1. `ai-product-factory-s3-subworkflow.json`
+2. `ai-product-factory-decision-logger-subworkflow.json`
+3. `pf-perplexity-research.json`
+4. `ai-product-factory-scavenging-subworkflow.json`
+5. `ai-product-factory-vision-loop-subworkflow.json`
+6. `ai-product-factory-architecture-loop-subworkflow.json`
+7. `ai-product-factory-api-workflow.json`
+8. `ai-product-factory-main-workflow.json`
+
+**Settings Management** (post-setup):
+- View/edit n8n configuration at `/settings/n8n`
+- Update workflows when new versions available
+- Health status indicators for all services
+- Re-run wizard option for reconfiguration
+
+### UI/UX Components
+
+The dashboard implements production-grade UI/UX patterns following 2025-2026 best practices for TanStack Start applications.
+
+#### Route Error Boundaries
+
+All routes use centralized error handling via `RouteErrorBoundary`:
+
+```tsx
+// Usage in route definition
+export const Route = createFileRoute("/projects/$projectId/")({
+  component: ProjectDetailPage,
+  errorComponent: RouteErrorBoundary,
+  pendingComponent: ProjectDetailSkeleton,
+  pendingMs: 200,      // Delay before showing loading state
+  pendingMinMs: 300,   // Minimum time to show loading state
+});
+```
+
+**File**: `frontend/components/error/RouteErrorBoundary.tsx`
+
+Features:
+- **Retry button**: Attempts to reload the current route
+- **Go back**: Returns to previous page in history
+- **Go home**: Returns to dashboard root
+- **Dev mode stack trace**: Shows full error details in development
+- **NotFound component**: Exported for 404 handling at root level
+
+#### Loading Skeletons
+
+Contextual skeleton loaders for smooth route transitions:
+
+**File**: `frontend/components/loading/RouteLoadingSpinner.tsx`
+
+| Component | Usage |
+|-----------|-------|
+| `RouteLoadingSpinner` | Generic centered spinner |
+| `ProjectListSkeleton` | Projects grid with card placeholders |
+| `ProjectDetailSkeleton` | Full project detail page structure |
+| `FormSkeleton` | New project form layout |
+
+#### Toast Notifications
+
+Sonner-based toast system with theme integration:
+
+**File**: `frontend/components/ui/sonner.tsx`
+
+```tsx
+import { toast } from "sonner";
+
+// Success notification
+toast.success("Project created", {
+  description: "Your project is now being processed",
+});
+
+// Error notification
+toast.error("Failed to export", {
+  description: error.message,
+});
+```
+
+The `<Toaster />` component is mounted in `__root.tsx` and automatically inherits theme colors.
+
+#### Alert Components
+
+Styled inline alerts for form validation and error display:
+
+**File**: `frontend/components/ui/alert.tsx`
+
+| Variant | Usage |
+|---------|-------|
+| `default` | Neutral information |
+| `destructive` | Errors and critical issues |
+| `success` | Successful operations |
+| `warning` | Cautionary messages |
+| `info` | Informational notices |
+
+```tsx
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { AlertCircle } from "lucide-react";
+
+<Alert variant="destructive">
+  <AlertCircle className="h-4 w-4" />
+  <AlertTitle>Error</AlertTitle>
+  <AlertDescription>{errorMessage}</AlertDescription>
+</Alert>
+```
+
+#### AlertDialog Component
+
+Confirmation dialogs for destructive actions:
+
+**File**: `frontend/components/ui/alert-dialog.tsx`
+
+Built on Radix UI AlertDialog primitive with shadcn/ui styling.
+
+#### shadcn/ui Configuration
+
+**File**: `frontend/components.json`
+
+```json
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": false,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "styles/globals.css",
+    "baseColor": "slate",
+    "cssVariables": true
+  },
+  "aliases": {
+    "components": "@/components",
+    "utils": "@/lib/utils",
+    "ui": "@/components/ui",
+    "lib": "@/lib",
+    "hooks": "@/hooks"
+  }
+}
+```
+
+This enables the shadcn CLI: `npx shadcn add <component>`
+
 ### API Endpoints
 
 | Endpoint | Method | Description |
@@ -2114,6 +2300,14 @@ The frontend dashboard provides a web-based interface for managing AI Product Fa
 | `/api/start-project` | POST | Create new project and trigger workflow |
 | `/api/presigned-url` | POST | Generate S3 presigned URL for file upload |
 | `/api/governance` | POST | Submit batch governance decisions (with retry) |
+| `/api/setup/status` | GET | Check if setup wizard completed (public) |
+| `/api/setup/n8n/test-connection` | POST | Test n8n URL + API key connectivity |
+| `/api/setup/n8n/save-config` | POST | Save n8n API URL and encrypted API key |
+| `/api/setup/workflows/list` | GET | List bundled workflows with import status |
+| `/api/setup/workflows/import` | POST | Import one or all workflows to n8n |
+| `/api/setup/workflows/verify` | POST | Test webhook accessibility |
+| `/api/setup/complete` | POST | Mark setup wizard as complete |
+| `/api/settings/n8n` | GET/PUT/DELETE | Manage n8n settings (post-setup) |
 
 **API Features:**
 - **Correlation IDs**: All responses include `x-correlation-id` header for distributed tracing
@@ -2130,6 +2324,274 @@ npm run dev     # Development server on port 3000
 npm run build   # Production build
 npm run start   # Start production server
 ```
+
+---
+
+## Setup Wizard Implementation
+
+The Setup Wizard is a frontend-based solution for configuring n8n integration after fresh deployment. This section documents the technical implementation details.
+
+### Database Schema
+
+**File**: `init-scripts/sql-templates/03-app-settings.sql`
+
+```sql
+-- Application settings table (key-value with encryption support)
+CREATE TABLE IF NOT EXISTS app_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    setting_key VARCHAR(100) NOT NULL UNIQUE,
+    setting_value JSONB NOT NULL,
+    setting_type VARCHAR(50) DEFAULT 'string',
+    is_sensitive BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_by VARCHAR(255)
+);
+
+-- Workflow registry (tracks imported workflows)
+CREATE TABLE IF NOT EXISTS workflow_registry (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workflow_name VARCHAR(255) NOT NULL,
+    workflow_file VARCHAR(255) NOT NULL UNIQUE,
+    n8n_workflow_id VARCHAR(100),
+    local_version VARCHAR(50) NOT NULL,
+    webhook_paths JSONB DEFAULT '[]'::JSONB,
+    is_active BOOLEAN DEFAULT FALSE,
+    import_status VARCHAR(50) DEFAULT 'pending',
+    last_import_at TIMESTAMP WITH TIME ZONE,
+    last_error TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_app_settings_key ON app_settings(setting_key);
+CREATE INDEX idx_workflow_registry_status ON workflow_registry(import_status);
+```
+
+**Settings Keys**:
+
+| Key | Type | Encrypted | Description |
+|-----|------|-----------|-------------|
+| `n8n.api_url` | string | No | n8n instance base URL |
+| `n8n.api_key` | string | **Yes** | n8n API key (AES-256-GCM) |
+| `n8n.webhook_base_url` | string | No | Base URL for webhooks |
+| `setup.wizard_completed` | boolean | No | Setup completion flag |
+| `setup.completed_at` | string | No | Timestamp of completion |
+
+### Core Library Files
+
+#### Encryption Library (`frontend/lib/encryption.ts`)
+
+AES-256-GCM encryption for sensitive data using AUTH_SECRET as key derivation source.
+
+```typescript
+import { encrypt, decrypt, mask, hash, generateSecret, isEncryptionConfigured } from '@/lib/encryption';
+
+// Encrypt API key before storing
+const encryptedKey = encrypt(apiKey);
+
+// Decrypt when making API calls
+const decryptedKey = decrypt(encryptedKey);
+
+// Mask for display: "sk-****1234"
+const maskedKey = mask(apiKey);
+
+// Hash for comparison (HMAC-SHA256)
+const hashedValue = hash(value);
+
+// Generate random secret
+const secret = generateSecret(32);
+
+// Check if encryption is properly configured
+if (!isEncryptionConfigured()) {
+  throw new Error('AUTH_SECRET not configured');
+}
+```
+
+**Security Features**:
+- **Key Derivation**: PBKDF2 with 100,000 iterations
+- **Random IV**: 12-byte IV generated per encryption
+- **Auth Tag**: 16-byte authentication tag for integrity
+- **Ciphertext Format**: `base64(IV + authTag + ciphertext)`
+
+#### Settings Library (`frontend/lib/settings.ts`)
+
+CRUD operations for app_settings table with automatic encryption handling.
+
+```typescript
+import { getSetting, setSetting, deleteSetting, isN8nConfigured } from '@/lib/settings';
+
+// Get a setting (auto-decrypts if is_sensitive=true)
+const apiUrl = await getSetting('n8n.api_url');
+
+// Set a setting (auto-encrypts if is_sensitive=true)
+await setSetting('n8n.api_key', apiKey, {
+  type: 'string',
+  sensitive: true,
+  updatedBy: user.email
+});
+
+// Quick check for n8n configuration
+const configured = await isN8nConfigured();
+```
+
+#### n8n API Client (`frontend/lib/n8n-api.ts`)
+
+REST API client for n8n Public API v1.
+
+```typescript
+import { N8nApiClient, testN8nConnection, listWorkflows, createWorkflow, activateWorkflow } from '@/lib/n8n-api';
+
+// Test connection
+const result = await testN8nConnection(url, apiKey);
+// Returns: { success: boolean, version?: string, error?: string }
+
+// Create client instance
+const client = new N8nApiClient(url, apiKey);
+
+// List all workflows
+const workflows = await client.listWorkflows();
+
+// Create workflow from JSON
+const workflow = await client.createWorkflow(workflowJson);
+
+// Activate workflow
+await client.activateWorkflow(workflowId);
+```
+
+#### Workflow Importer (`frontend/lib/workflow-importer.ts`)
+
+Logic for importing bundled workflows with dependency ordering.
+
+```typescript
+import {
+  getBundledWorkflows,
+  importWorkflow,
+  importAllWorkflows,
+  extractWebhookPaths,
+  checkForUpdates
+} from '@/lib/workflow-importer';
+
+// Get list of bundled workflows
+const workflows = await getBundledWorkflows();
+
+// Import single workflow
+const result = await importWorkflow('ai-product-factory-s3-subworkflow.json', client);
+
+// Import all with progress callback
+await importAllWorkflows(client, (progress) => {
+  console.log(`${progress.completed}/${progress.total}: ${progress.current}`);
+});
+
+// Extract webhook paths from workflow JSON
+const webhooks = extractWebhookPaths(workflowJson);
+// Returns: ['/webhook/start-project', '/webhook/governance-batch']
+
+// Check for available updates
+const updates = await checkForUpdates();
+```
+
+### Setup Wizard Components
+
+| Component | Props | Purpose |
+|-----------|-------|---------|
+| `SetupWizardLayout` | `step`, `totalSteps`, `children` | Shared layout with stepper |
+| `SetupStepWelcome` | - | Prerequisites and overview |
+| `SetupStepConnect` | `apiUrl`, `apiKey`, `onTest`, `onSave` | n8n connection form |
+| `SetupStepImport` | `workflows`, `onImport`, `progress` | Workflow import with progress |
+| `SetupStepWebhooks` | `webhooks` | Detected webhook display |
+| `SetupStepVerify` | `checks`, `onRetest` | Verification checklist |
+| `SetupStepComplete` | `summary` | Success and next steps |
+
+### Security Considerations
+
+1. **API Key Encryption**: Stored encrypted using AES-256-GCM with AUTH_SECRET
+2. **Server-Side Only**: API key never sent to browser; n8n calls made server-side
+3. **Auth Required**: All `/api/setup/*` routes require authentication except `/status`
+4. **Masked Display**: API key shown as `sk-****1234` in settings UI
+5. **HTTPS Validation**: n8n URL validated for HTTPS in production
+6. **CORS**: API routes validate origin for security
+
+### Environment Variables
+
+```bash
+# Required for encryption
+AUTH_SECRET=your-32-character-secret-key!!
+
+# Database connection
+DATABASE_URL=postgresql://user:pass@host:5432/db
+
+# Optional: Skip SSL validation for local testing
+NODE_TLS_REJECT_UNAUTHORIZED=0  # Development only!
+```
+
+### Testing the Setup Wizard
+
+**Unit Tests** (390 tests total):
+
+```bash
+# Run all frontend tests
+cd frontend && npm run test
+
+# Run setup wizard tests only
+cd frontend && npm run test -- --grep "Setup"
+
+# Run encryption tests only
+cd frontend && npm run test -- --grep "Encryption"
+```
+
+**Manual Testing Checklist**:
+
+1. ✅ Fresh deployment shows setup wizard on first login
+2. ✅ Connection test validates n8n URL and API key
+3. ✅ Workflow import shows progress for all 8 workflows
+4. ✅ Webhook URLs are auto-detected and displayed
+5. ✅ Verification checks all services
+6. ✅ Settings page allows reconfiguration post-setup
+7. ✅ Re-running wizard is possible from settings
+
+**E2E Testing** (requires Docker environment):
+
+```bash
+# Start test environment
+npm run test:env:up
+
+# Run E2E tests (when available)
+npx playwright test tests/e2e/setup-wizard.spec.ts
+
+# Cleanup
+npm run test:env:down
+```
+
+### Troubleshooting Setup Wizard
+
+#### Problem: "AUTH_SECRET not configured"
+
+**Solution**: Ensure AUTH_SECRET environment variable is set (minimum 16 characters):
+```bash
+AUTH_SECRET=your-secret-key-at-least-16-chars
+```
+
+#### Problem: "Connection test failed"
+
+**Solutions**:
+1. Verify n8n URL is accessible from the server
+2. Check API key has correct permissions
+3. Ensure n8n API is enabled in n8n settings
+
+#### Problem: "Workflow import failed"
+
+**Solutions**:
+1. Check n8n has sufficient storage/memory
+2. Verify workflow JSON files exist in `/workflows` directory
+3. Check n8n logs for specific error messages
+
+#### Problem: "Encryption/Decryption failed"
+
+**Solutions**:
+1. Ensure AUTH_SECRET hasn't changed since encryption
+2. Check for corrupted ciphertext in database
+3. Verify pgcrypto extension is enabled
 
 ---
 
@@ -2193,7 +2655,28 @@ ai-product-factory/
 │   │   ├── api/                          # API routes
 │   │   │   ├── start-project.ts          # Create project endpoint
 │   │   │   ├── presigned-url.ts          # S3 upload URL endpoint
-│   │   │   └── governance.ts             # Batch governance endpoint
+│   │   │   ├── governance.ts             # Batch governance endpoint
+│   │   │   └── setup/                    # Setup wizard API routes
+│   │   │       ├── status.ts             # Check setup completion (public)
+│   │   │       ├── n8n/
+│   │   │       │   ├── test-connection.ts # Test n8n connectivity
+│   │   │       │   └── save-config.ts    # Save n8n config (encrypted)
+│   │   │       ├── workflows/
+│   │   │       │   ├── list.ts           # List bundled workflows
+│   │   │       │   ├── import.ts         # Import workflows to n8n
+│   │   │       │   └── verify.ts         # Verify webhook accessibility
+│   │   │       └── complete.ts           # Mark setup complete
+│   │   ├── setup/                        # Setup wizard pages
+│   │   │   ├── index.tsx                 # Setup entry point (redirect logic)
+│   │   │   ├── welcome.tsx               # Step 1: Welcome & prerequisites
+│   │   │   ├── connect.tsx               # Step 2: n8n URL + API key
+│   │   │   ├── import.tsx                # Step 3: Workflow import
+│   │   │   ├── webhooks.tsx              # Step 4: Webhook detection
+│   │   │   ├── verify.tsx                # Step 5: Verification
+│   │   │   └── complete.tsx              # Step 6: Success summary
+│   │   ├── settings/                     # Settings pages (post-setup)
+│   │   │   ├── index.tsx                 # Settings entry point
+│   │   │   └── n8n.tsx                   # n8n configuration management
 │   │   └── projects/
 │   │       ├── index.tsx                 # Projects list
 │   │       ├── new.tsx                   # New project page (drag-drop upload)
@@ -2203,12 +2686,29 @@ ai-product-factory/
 │   │   ├── artifacts/                    # Document viewer
 │   │   ├── auth/                         # Authentication (UserMenu)
 │   │   ├── chat/                         # Chat interface
+│   │   ├── error/                        # Error handling components
+│   │   │   └── RouteErrorBoundary.tsx    # Route error boundary + NotFound
 │   │   ├── governance/                   # Governance UI components
 │   │   │   └── GovernanceWidget.tsx      # Tech Stack Configurator
 │   │   ├── history/                      # History timeline
+│   │   ├── loading/                      # Loading state components
+│   │   │   └── RouteLoadingSpinner.tsx   # Skeletons for routes
+│   │   ├── setup/                        # Setup wizard components
+│   │   │   ├── SetupWizardLayout.tsx     # Shared wizard layout with stepper
+│   │   │   ├── SetupStepWelcome.tsx      # Welcome step component
+│   │   │   ├── SetupStepConnect.tsx      # Connect step with form
+│   │   │   ├── SetupStepImport.tsx       # Import step with progress
+│   │   │   ├── SetupStepWebhooks.tsx     # Webhooks display
+│   │   │   ├── SetupStepVerify.tsx       # Verification checklist
+│   │   │   └── SetupStepComplete.tsx     # Completion summary
 │   │   ├── upload/                       # File upload components
 │   │   │   └── FileUpload.tsx            # Drag-drop file uploader
 │   │   └── ui/                           # Shadcn components
+│   │       ├── alert.tsx                 # Alert with variants
+│   │       ├── alert-dialog.tsx          # Confirmation dialogs
+│   │       ├── sonner.tsx                # Toast notifications
+│   │       └── ...                       # Other shadcn components
+│   ├── components.json                    # shadcn CLI configuration
 │   ├── lib/                              # Utilities
 │   │   ├── auth.ts                       # Better-Auth configuration
 │   │   ├── auth-client.ts                # Client-side auth hooks
@@ -2216,13 +2716,19 @@ ai-product-factory/
 │   │   ├── s3.ts                         # SeaweedFS client (with presigned URLs)
 │   │   ├── schemas.ts                    # Zod validation schemas
 │   │   ├── n8n.ts                        # n8n webhook client (with retry logic)
+│   │   ├── n8n-api.ts                    # n8n REST API client (workflow import)
+│   │   ├── settings.ts                   # App settings CRUD (getSetting/setSetting)
+│   │   ├── workflow-importer.ts          # Workflow import logic with ordering
+│   │   ├── encryption.ts                 # AES-256-GCM encryption for API keys
 │   │   ├── logger.ts                     # Structured logging utility
 │   │   ├── request-context.ts            # Request context & correlation ID handling
 │   │   └── export.ts                     # ZIP export utility
 │   ├── tests/                            # Frontend component tests
 │   │   ├── setup.ts                      # Vitest setup with Radix UI mocks
 │   │   ├── GovernanceWidget.test.tsx     # GovernanceWidget tests (24 tests)
-│   │   └── request-context.test.ts       # Request context tests (26 tests)
+│   │   ├── request-context.test.ts       # Request context tests (26 tests)
+│   │   ├── encryption.test.ts            # Encryption library tests (22 tests)
+│   │   └── setup-wizard.test.tsx         # Setup wizard component tests (100+ tests)
 │   ├── vitest.config.ts                  # Frontend Vitest configuration
 │   └── types/                            # TypeScript types
 ├── tests/                                 # Backend integration tests
@@ -2232,10 +2738,15 @@ ai-product-factory/
 │   ├── sync-workflows.js                 # n8n workflow sync script
 │   ├── run-tests.sh                      # Full test suite runner (Docker + tests)
 │   ├── test-sync-dry-run.sh              # Workflow sync dry-run test
-│   └── test-migration-idempotency.sh     # Database migration test
+│   ├── test-migration-idempotency.sh     # Database migration test
+│   └── validate-production-parity.sh     # Production parity validation script
 ├── init-scripts/
-│   └── 01-project-state.sql              # Database schema (requires pgcrypto)
+│   ├── 01-project-state.sql              # Database schema (requires pgcrypto)
+│   └── sql-templates/
+│       └── 03-app-settings.sql           # Setup wizard settings & workflow registry
 ├── docker-compose.test.yml               # Test environment (PostgreSQL, SeaweedFS, n8n)
+├── docker-compose.local-prod.yml         # Production-parity testing (mirrors Dokploy)
+├── .env.local-prod.example               # Environment template for local-prod testing
 ├── workflows/                             # n8n workflow definitions
 │   │
 │   │   # Titan Workflow Suite
@@ -2279,7 +2790,8 @@ The AI Product Factory includes comprehensive test suites for both backend integ
 ai-product-factory/
 ├── vitest.config.ts              # Root config - backend tests only
 ├── tests/
-│   └── backend.test.ts           # Backend integration tests (9 tests)
+│   ├── backend.test.ts           # Backend integration tests (9 tests)
+│   └── production-parity.test.ts # Production parity tests (requires local-prod env)
 └── frontend/
     ├── vitest.config.ts          # Frontend config - React component tests
     └── tests/
@@ -2288,7 +2800,7 @@ ai-product-factory/
         └── request-context.test.ts    # Request context tests (26 tests)
 ```
 
-**Total Tests:** 59 (9 backend + 50 frontend)
+**Total Tests:** 59+ (9 backend + 50 frontend + production-parity tests)
 
 ### Running Tests
 
@@ -2814,6 +3326,209 @@ When running `npm run test:all`, you'll see output like:
 ╚══════════════════════════════════════════════════════════════╝
   All tests passed! ✓ (59 total)
 ```
+
+### Local Production-Parity Testing
+
+A production-parity Docker Compose environment that **exactly mirrors** the Dokploy production deployment, enabling comprehensive validation of all services, health checks, and Traefik routing before deploying.
+
+#### Purpose
+
+The `docker-compose.local-prod.yml` file solves the problem of configuration drift between local development and production. Key differences it addresses:
+
+| Aspect | Local Dev (`docker-compose.yml`) | Dokploy Production | Local-Prod Testing |
+|--------|----------------------------------|-------------------|-------------------|
+| **PostgreSQL** | v17 | v18 | v18 ✓ |
+| **Traefik** | Self-managed | External (Dokploy) | Local simulation ✓ |
+| **Redis Auth** | Enabled | Disabled | Disabled ✓ |
+| **Network** | Single | Dual (n8n + dokploy) | Dual ✓ |
+| **SeaweedFS** | Entrypoint script | Simple command | Simple command ✓ |
+| **Observability** | Included | Not included | Not included ✓ |
+
+#### Services Included (8 total)
+
+| Service | Image | Health Check | Access URL |
+|---------|-------|--------------|------------|
+| **Traefik** | `traefik:v3.6.7` | `wget` to `/ping` | http://localhost:8080 |
+| **n8n** | `n8nio/n8n:next` | `wget` to `/healthz` | http://n8n.localhost |
+| **PostgreSQL** | `postgres:18-alpine` | `pg_isready` | localhost:5432 |
+| **Redis** | `redis:7.4-alpine` | `redis-cli ping` | localhost:6379 |
+| **Qdrant** | `qdrant/qdrant:v1.16` | bash TCP check | localhost:6333 |
+| **FalkorDB** | `falkordb/falkordb:latest` | `redis-cli ping` | localhost:6379 |
+| **Graphiti** | `zepai/knowledge-graph-mcp:standalone` | `curl` to `/health` | localhost:8000 |
+| **SeaweedFS** | `chrislusf/seaweedfs:latest` | `wget` to master:9333 | http://s3.localhost |
+| **Frontend** | Built from `./frontend` | `wget` to `/api/health` | http://dashboard.localhost |
+
+#### npm Commands
+
+| Command | Description |
+|---------|-------------|
+| `npm run test:local-prod:up` | Start all services (builds frontend) |
+| `npm run test:local-prod:down` | Stop and cleanup (removes volumes) |
+| `npm run test:local-prod:logs` | Stream logs from all services |
+| `npm run test:local-prod:status` | Show service health status |
+| `npm run test:local-prod:validate` | Run full validation script |
+| `npm run test:local-prod:validate:keep` | Validate without cleanup |
+| `npm run test:production-parity` | Run validation (alias) |
+
+#### Quick Start
+
+```bash
+# 1. Start the environment
+npm run test:local-prod:up
+
+# 2. Wait for all services to be healthy (check status)
+npm run test:local-prod:status
+
+# 3. Access services in browser
+#    - Traefik Dashboard: http://localhost:8080
+#    - n8n: http://n8n.localhost
+#    - Dashboard: http://dashboard.localhost
+#    - S3: http://s3.localhost
+
+# 4. Run validation tests
+npm run test:local-prod:validate
+
+# 5. Cleanup when done
+npm run test:local-prod:down
+```
+
+#### .localhost Domains
+
+Modern browsers automatically resolve `.localhost` domains to `127.0.0.1`, so no `/etc/hosts` configuration is needed:
+
+- `n8n.localhost` → Traefik routes to n8n:5678
+- `dashboard.localhost` → Traefik routes to frontend:3000
+- `s3.localhost` → Traefik routes to seaweedfs:8333
+
+#### Validation Script
+
+The `scripts/validate-production-parity.sh` script performs comprehensive checks:
+
+1. **Service Startup**: Waits for all 8 services to become healthy
+2. **Traefik Routing**: Tests routing to n8n.localhost, dashboard.localhost, s3.localhost
+3. **PostgreSQL Version**: Confirms PostgreSQL 18.x is running
+4. **S3 Operations**: Creates bucket, uploads file, verifies download
+5. **Health Endpoints**: Validates all health check endpoints respond correctly
+6. **Service Communication**: Tests internal Docker network connectivity
+
+Example output:
+```
+╔══════════════════════════════════════════════════════════════╗
+║     Production Parity Validation                              ║
+╚══════════════════════════════════════════════════════════════╝
+
+[1/6] Starting services...
+[2/6] Waiting for health checks...
+   ✓ traefik: healthy
+   ✓ postgres: healthy
+   ✓ redis: healthy
+   ✓ qdrant: healthy
+   ✓ falkordb: healthy
+   ✓ graphiti: healthy
+   ✓ seaweedfs: healthy
+   ✓ n8n: healthy
+
+[3/6] Testing Traefik routing...
+   ✓ n8n.localhost → 200 OK
+   ✓ s3.localhost → 200 OK
+
+[4/6] Validating PostgreSQL 18...
+   ✓ PostgreSQL 18.x confirmed
+
+[5/6] Testing S3 operations...
+   ✓ Bucket created
+   ✓ File upload successful
+   ✓ File download verified
+
+╔══════════════════════════════════════════════════════════════╗
+║                     Validation Summary                        ║
+╚══════════════════════════════════════════════════════════════╝
+  All checks passed! ✓
+  Environment matches Dokploy production configuration.
+```
+
+#### Integration Tests
+
+The `tests/production-parity.test.ts` file provides Vitest tests for automated validation:
+
+```bash
+# Run integration tests against the local-prod environment
+npm run test:local-prod:up
+npx vitest run tests/production-parity.test.ts
+npm run test:local-prod:down
+```
+
+Test categories:
+- **Traefik Reverse Proxy**: Dashboard access, routing to services
+- **Service Health Checks**: n8n, dashboard, SeaweedFS, Qdrant, Graphiti
+- **PostgreSQL Configuration**: Version 18.x validation, database accessibility
+- **S3 Operations**: Bucket creation, file upload/download
+
+#### Environment Variables
+
+Copy `.env.local-prod.example` to `.env` for local testing:
+
+```bash
+cp .env.local-prod.example .env
+```
+
+Key variables:
+```bash
+# Database
+POSTGRES_USER=n8n
+POSTGRES_PASSWORD=n8n_test_password
+POSTGRES_DB=n8n
+
+# n8n
+N8N_ENCRYPTION_KEY=test-encryption-key-32chars!!!
+
+# S3/SeaweedFS
+S3_ACCESS_KEY=admin
+S3_SECRET_KEY=admin123
+S3_BUCKET=product-factory-artifacts
+
+# Auth (for dashboard)
+AUTH_SECRET=test-auth-secret-32-characters!!
+```
+
+#### Troubleshooting
+
+**Problem: Traefik health check failing**
+```
+Container unhealthy: traefik
+```
+**Solution**: The compose file requires `--ping=true` in Traefik command and uses `wget` for health checks:
+```yaml
+command:
+  - "--ping=true"  # Required!
+healthcheck:
+  test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ping > /dev/null 2>&1 || exit 1"]
+```
+
+**Problem: .localhost domains not resolving**
+```
+curl: (6) Could not resolve host: n8n.localhost
+```
+**Solution**: Most modern browsers support `.localhost` automatically. For curl/wget, add to `/etc/hosts`:
+```
+127.0.0.1 n8n.localhost dashboard.localhost s3.localhost
+```
+
+**Problem: Port 80 already in use**
+```
+Error: bind: address already in use
+```
+**Solution**: Stop other services using port 80 (Apache, nginx, another Docker container):
+```bash
+sudo lsof -i :80
+sudo systemctl stop apache2  # or nginx
+```
+
+**Problem: Graphiti takes too long to start**
+```
+Container starting: graphiti (90s start_period)
+```
+**Solution**: This is expected. Graphiti needs ~60-90 seconds to initialize its LLM client and graph connections. The `start_period: 90s` in the compose file accounts for this.
 
 ---
 
@@ -3352,6 +4067,10 @@ Follow the comprehensive testing checklist in `workflows/TESTING_CHECKLIST.md`:
 See `workflows/CONVERSION_SUMMARY.md` for complete change history.
 
 **Recent Versions**:
+- **v3.0.0** (2026-01-16): **Setup Wizard for n8n Integration** - 6-step guided wizard (`/setup/*` routes), n8n API client for workflow import, encrypted API key storage (AES-256-GCM), settings management (`/settings/n8n`), database schema for app_settings and workflow_registry, 390 tests passing
+- **v2.9.0** (2026-01-15): Frontend UI/UX improvements - route error boundaries (`RouteErrorBoundary`), loading skeletons (`ProjectDetailSkeleton`, `ProjectListSkeleton`, `FormSkeleton`), toast notifications (Sonner), Alert components with variants, AlertDialog for confirmations, `components.json` for shadcn CLI
+- **v2.8.4** (2026-01-15): n8n auto-bootstrap on first deployment (`n8n-entrypoint.sh`), workflow verification in CI/CD, post-deployment verification script
+- **v2.8.3** (2026-01-15): Local production-parity testing environment (`docker-compose.local-prod.yml`), Traefik simulation for Dokploy, validation scripts
 - **v2.8.2** (2026-01-15): Structured logging with correlation IDs, request-context utilities, comprehensive test coverage (59 tests)
 - **v2.8.1** (2026-01-15): Security hardening, input validation with Zod schemas, database schema updates for chat messages
 - **v2.8.0** (2026-01-14): Added Error Trigger nodes to all adversarial loops, S3 retry configuration, diagnostic audit tooling

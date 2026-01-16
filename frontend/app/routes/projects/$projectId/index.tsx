@@ -8,6 +8,7 @@
 import { useState, useMemo } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,8 @@ import { ArtifactViewer } from "@/components/artifacts/ArtifactViewer";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { HistoryTimeline } from "@/components/history/HistoryTimeline";
 import { ADRViewer } from "@/components/adr/ADRViewer";
+import { RouteErrorBoundary } from "@/components/error/RouteErrorBoundary";
+import { ProjectDetailSkeleton } from "@/components/loading/RouteLoadingSpinner";
 import {
   getProject,
   getDecisionLogEntries,
@@ -130,6 +133,10 @@ export const Route = createFileRoute("/projects/$projectId/")({
     return data;
   },
   component: ProjectDetailPage,
+  errorComponent: RouteErrorBoundary,
+  pendingComponent: ProjectDetailSkeleton,
+  pendingMs: 200,
+  pendingMinMs: 300,
 });
 
 function ProjectDetailPage() {
@@ -179,6 +186,9 @@ function ProjectDetailPage() {
     } catch (error) {
       console.error("Failed to load artifact:", error);
       setArtifactContent("");
+      toast.error("Failed to load artifact", {
+        description: error instanceof Error ? error.message : "Could not fetch artifact content",
+      });
     } finally {
       setIsLoadingContent(false);
     }
@@ -232,6 +242,9 @@ function ProjectDetailPage() {
       }
     } catch (error) {
       console.error("Failed to send message:", error);
+      toast.error("Failed to send message", {
+        description: error instanceof Error ? error.message : "Could not send message to workflow",
+      });
     } finally {
       setIsSending(false);
     }
@@ -263,8 +276,14 @@ function ProjectDetailPage() {
         },
       });
       downloadZip(result.data, result.filename);
+      toast.success("Export complete", {
+        description: `Downloaded ${result.filename}`,
+      });
     } catch (error) {
       console.error("Failed to export project:", error);
+      toast.error("Failed to export project", {
+        description: error instanceof Error ? error.message : "Could not create project archive",
+      });
     } finally {
       setIsExporting(false);
     }

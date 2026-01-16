@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,9 +20,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { FileUpload } from "@/components/upload/FileUpload";
 import { requireAuth } from "@/lib/auth-guard";
-import { ArrowLeft, Loader2, Rocket } from "lucide-react";
+import { RouteErrorBoundary } from "@/components/error/RouteErrorBoundary";
+import { FormSkeleton } from "@/components/loading/RouteLoadingSpinner";
+import { ArrowLeft, Loader2, Rocket, AlertCircle } from "lucide-react";
 import type { InputFile } from "@/lib/schemas";
 
 export const Route = createFileRoute("/projects/new")({
@@ -30,6 +34,10 @@ export const Route = createFileRoute("/projects/new")({
     return requireAuth(location);
   },
   component: NewProjectPage,
+  errorComponent: RouteErrorBoundary,
+  pendingComponent: FormSkeleton,
+  pendingMs: 200,
+  pendingMinMs: 300,
 });
 
 function NewProjectPage() {
@@ -92,13 +100,22 @@ function NewProjectPage() {
 
       const data = await response.json();
 
+      // Show success toast
+      toast.success("Project created successfully", {
+        description: `${projectName} is now being processed by the AI workflow.`,
+      });
+
       // Navigate to the project page
       navigate({
         to: "/projects/$projectId",
         params: { projectId: data.project_id },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create project");
+      const errorMessage = err instanceof Error ? err.message : "Failed to create project";
+      setError(errorMessage);
+      toast.error("Failed to create project", {
+        description: errorMessage,
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -176,9 +193,11 @@ function NewProjectPage() {
 
             {/* Error Message */}
             {error && (
-              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-                {error}
-              </div>
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             )}
           </CardContent>
 
