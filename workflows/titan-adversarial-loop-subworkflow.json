@@ -7,7 +7,10 @@
       "name": "Error Trigger",
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
-      "position": [-200, 400]
+      "position": [
+        -200,
+        400
+      ]
     },
     {
       "parameters": {
@@ -17,7 +20,10 @@
       "name": "Error Handler",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [0, 400]
+      "position": [
+        0,
+        400
+      ]
     },
     {
       "parameters": {
@@ -750,5 +756,6 @@
   ],
   "triggerCount": 0,
   "updatedAt": "2026-01-13T00:00:00.000Z",
-  "versionId": "5"
+  "versionId": "5",
+  "active": false
 }

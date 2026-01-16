@@ -7,7 +7,10 @@
       "name": "Error Trigger",
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
-      "position": [-200, 400]
+      "position": [
+        -200,
+        400
+      ]
     },
     {
       "parameters": {
@@ -17,7 +20,10 @@
       "name": "Error Handler",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [0, 400]
+      "position": [
+        0,
+        400
+      ]
     },
     {
       "parameters": {
@@ -27,7 +33,10 @@
       "name": "Subworkflow Entry",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [0, 0]
+      "position": [
+        0,
+        0
+      ]
     },
     {
       "parameters": {
@@ -37,7 +46,10 @@
       "name": "Validate Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [240, 0]
+      "position": [
+        240,
+        0
+      ]
     },
     {
       "parameters": {
@@ -114,7 +126,10 @@
       "name": "Route Operation",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
-      "position": [480, 0]
+      "position": [
+        480,
+        0
+      ]
     },
     {
       "parameters": {
@@ -124,7 +139,10 @@
       "name": "Build Upload Key",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [720, -200]
+      "position": [
+        720,
+        -200
+      ]
     },
     {
       "parameters": {
@@ -154,7 +172,10 @@
       "name": "S3 Upload",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [960, -200],
+      "position": [
+        960,
+        -200
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "s3-auth",
@@ -170,7 +191,10 @@
       "name": "Upload Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, -200]
+      "position": [
+        1200,
+        -200
+      ]
     },
     {
       "parameters": {
@@ -180,7 +204,10 @@
       "name": "Build Download Key",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [720, -50]
+      "position": [
+        720,
+        -50
+      ]
     },
     {
       "parameters": {
@@ -208,7 +235,10 @@
       "name": "S3 Download",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [960, -50],
+      "position": [
+        960,
+        -50
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "s3-auth",
@@ -224,7 +254,10 @@
       "name": "Download Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, -50]
+      "position": [
+        1200,
+        -50
+      ]
     },
     {
       "parameters": {
@@ -252,7 +285,10 @@
       "name": "S3 List Objects",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [720, 100],
+      "position": [
+        720,
+        100
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "s3-auth",
@@ -268,7 +304,10 @@
       "name": "Parse List Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [960, 100]
+      "position": [
+        960,
+        100
+      ]
     },
     {
       "parameters": {
@@ -278,7 +317,10 @@
       "name": "Build PostgreSQL Query",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [720, 250]
+      "position": [
+        720,
+        250
+      ]
     },
     {
       "parameters": {
@@ -292,7 +334,10 @@
       "name": "PostgreSQL Upsert",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [960, 250],
+      "position": [
+        960,
+        250
+      ],
       "credentials": {
         "postgres": {
           "id": "postgres-cred",
@@ -308,7 +353,10 @@
       "name": "PostgreSQL Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, 250]
+      "position": [
+        1200,
+        250
+      ]
     },
     {
       "parameters": {
@@ -322,7 +370,10 @@
       "name": "Merge Output",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [1440, 0]
+      "position": [
+        1440,
+        0
+      ]
     },
     {
       "parameters": {
@@ -336,7 +387,10 @@
       "name": "PostgreSQL Insert Decision Log",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
-      "position": [720, 400],
+      "position": [
+        720,
+        400
+      ],
       "credentials": {
         "postgres": {
           "id": "postgres-cred",
@@ -353,7 +407,10 @@
       "name": "Decision Log Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [960, 400]
+      "position": [
+        960,
+        400
+      ]
     },
     {
       "parameters": {
@@ -381,7 +438,10 @@
       "name": "S3 List Input Files",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [720, 550],
+      "position": [
+        720,
+        550
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "s3-auth",
@@ -397,7 +457,10 @@
       "name": "Parse Input Files Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [960, 550]
+      "position": [
+        960,
+        550
+      ]
     }
   ],
   "connections": {
@@ -658,5 +721,6 @@
   ],
   "triggerCount": 0,
   "pinData": {},
-  "versionId": "1"
+  "versionId": "1",
+  "active": false
 }

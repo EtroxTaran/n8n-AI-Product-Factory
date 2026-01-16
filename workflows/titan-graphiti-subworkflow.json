@@ -5,7 +5,10 @@
       "name": "Subworkflow Entry Point",
       "id": "trigger-1",
       "typeVersion": 1.1,
-      "position": [0, 300],
+      "position": [
+        0,
+        300
+      ],
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "parameters": {
         "workflowInputs": {
@@ -58,7 +61,10 @@
       "name": "Input Validator",
       "id": "validate-input",
       "typeVersion": 2,
-      "position": [180, 300],
+      "position": [
+        180,
+        300
+      ],
       "type": "n8n-nodes-base.code",
       "parameters": {
         "jsCode": "// Validate input and prepare request ID for tracing\nconst input = $input.first().json;\n\nif (!input.operation) {\n  throw new Error('Missing required field: operation');\n}\n\nconst validOps = ['add_episode', 'search_nodes', 'search_facts', 'create_collection'];\nif (!validOps.includes(input.operation)) {\n  throw new Error(`Invalid operation: ${input.operation}. Valid: ${validOps.join(', ')}`);\n}\n\nswitch (input.operation) {\n  case 'add_episode':\n    if (!input.content && !input.text) {\n      throw new Error('add_episode requires \"content\" or \"text\" field');\n    }\n    break;\n  case 'search_nodes':\n  case 'search_facts':\n    if (!input.query) {\n      throw new Error(`${input.operation} requires \"query\" field`);\n    }\n    break;\n  case 'create_collection':\n    if (!input.name) {\n      throw new Error('create_collection requires \"name\" field');\n    }\n    break;\n}\n\nconst requestId = `titan_${Date.now()}_${Math.random().toString(36).substring(7)}`;\n\nreturn {\n  json: {\n    ...input,\n    request_id: requestId,\n    timestamp: new Date().toISOString()\n  }\n};"
@@ -68,7 +74,10 @@
       "name": "Operation Router",
       "id": "switch-1",
       "typeVersion": 3.4,
-      "position": [380, 300],
+      "position": [
+        380,
+        300
+      ],
       "type": "n8n-nodes-base.switch",
       "parameters": {
         "rules": {
@@ -170,7 +179,10 @@
       "name": "Knowledge Graph Episode Ingestion",
       "id": "http-add-episode",
       "typeVersion": 4.3,
-      "position": [620, 100],
+      "position": [
+        620,
+        100
+      ],
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
@@ -207,7 +219,10 @@
       "name": "Knowledge Graph Node Search",
       "id": "http-search-nodes",
       "typeVersion": 4.3,
-      "position": [620, 300],
+      "position": [
+        620,
+        300
+      ],
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
@@ -244,7 +259,10 @@
       "name": "Knowledge Graph Fact Search",
       "id": "http-search-facts",
       "typeVersion": 4.3,
-      "position": [620, 500],
+      "position": [
+        620,
+        500
+      ],
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
@@ -281,7 +299,10 @@
       "name": "Episode Ingestion Response Validator",
       "id": "validate-add-response",
       "typeVersion": 2,
-      "position": [860, 100],
+      "position": [
+        860,
+        100
+      ],
       "type": "n8n-nodes-base.code",
       "parameters": {
         "jsCode": "const response = $input.first().json;\nconst originalData = $('Input Validator').first().json;\n\nif (response.error || response.statusCode >= 400) {\n  return {\n    json: {\n      operation: 'add_episode',\n      status: 'error',\n      request_id: originalData.request_id,\n      error: response.error?.message || response.message || 'HTTP error',\n      details: response\n    }\n  };\n}\n\nreturn {\n  json: {\n    operation: 'add_episode',\n    status: 'success',\n    request_id: originalData.request_id,\n    result: response.result,\n    episode_name: originalData.name,\n    group_id: originalData.group_id || 'titan'\n  }\n};"
@@ -291,7 +312,10 @@
       "name": "Node Search Response Validator",
       "id": "validate-nodes-response",
       "typeVersion": 2,
-      "position": [860, 300],
+      "position": [
+        860,
+        300
+      ],
       "type": "n8n-nodes-base.code",
       "parameters": {
         "jsCode": "const response = $input.first().json;\nconst originalData = $('Input Validator').first().json;\n\nif (response.statusCode >= 400 || response.error) {\n  return {\n    json: {\n      operation: 'search_nodes',\n      status: 'error',\n      request_id: originalData.request_id,\n      query: originalData.query,\n      error: response.error?.message || response.message || 'HTTP error',\n      result: [],\n      count: 0\n    }\n  };\n}\n\nlet result = response.result;\nif (typeof result === 'string') {\n  try { result = JSON.parse(result).content || JSON.parse(result); } catch (e) { result = [{ content: result }]; }\n}\nif (!Array.isArray(result)) result = result ? [result] : [];\n\nreturn {\n  json: {\n    operation: 'search_nodes',\n    status: 'success',\n    request_id: originalData.request_id,\n    query: originalData.query,\n    result: result,\n    count: result.length\n  }\n};"
@@ -301,7 +325,10 @@
       "name": "Fact Search Response Validator",
       "id": "validate-facts-response",
       "typeVersion": 2,
-      "position": [860, 500],
+      "position": [
+        860,
+        500
+      ],
       "type": "n8n-nodes-base.code",
       "parameters": {
         "jsCode": "const response = $input.first().json;\nconst originalData = $('Input Validator').first().json;\n\nif (response.statusCode >= 400 || response.error) {\n  return {\n    json: {\n      operation: 'search_facts',\n      status: 'error',\n      request_id: originalData.request_id,\n      query: originalData.query,\n      error: response.error?.message || response.message || 'HTTP error',\n      result: [],\n      count: 0\n    }\n  };\n}\n\nlet result = response.result;\nif (typeof result === 'string') {\n  try { result = JSON.parse(result).content || JSON.parse(result); } catch (e) { result = [{ content: result }]; }\n}\nif (!Array.isArray(result)) result = result ? [result] : [];\n\nreturn {\n  json: {\n    operation: 'search_facts',\n    status: 'success',\n    request_id: originalData.request_id,\n    query: originalData.query,\n    result: result,\n    count: result.length\n  }\n};"
@@ -311,7 +338,10 @@
       "name": "Output Aggregator",
       "id": "output-merge",
       "typeVersion": 3,
-      "position": [1100, 300],
+      "position": [
+        1100,
+        300
+      ],
       "type": "n8n-nodes-base.merge",
       "parameters": {
         "mode": "chooseBranch"
@@ -321,7 +351,10 @@
       "name": "Knowledge Graph Collection Creator",
       "id": "http-create-collection",
       "typeVersion": 4.3,
-      "position": [620, 700],
+      "position": [
+        620,
+        700
+      ],
       "type": "n8n-nodes-base.httpRequest",
       "parameters": {
         "method": "POST",
@@ -358,7 +391,10 @@
       "name": "Collection Creation Response Validator",
       "id": "validate-create-response",
       "typeVersion": 2,
-      "position": [860, 700],
+      "position": [
+        860,
+        700
+      ],
       "type": "n8n-nodes-base.code",
       "parameters": {
         "jsCode": "const response = $input.first().json;\nconst originalData = $('Input Validator').first().json;\n\nif (response.statusCode >= 400 || response.error) {\n  const errorMessage = response.error?.message || response.message || 'HTTP error';\n  // Handle \"already exists\" as success\n  if (errorMessage.toLowerCase().includes('already exists')) {\n    return {\n      json: {\n        operation: 'create_collection',\n        status: 'success',\n        request_id: originalData.request_id,\n        message: 'Collection already exists',\n        collection_name: originalData.name\n      }\n    };\n  }\n  return {\n    json: {\n      operation: 'create_collection',\n      status: 'error',\n      request_id: originalData.request_id,\n      error: errorMessage,\n      details: response\n    }\n  };\n}\n\nreturn {\n  json: {\n    operation: 'create_collection',\n    status: 'success',\n    request_id: originalData.request_id,\n    message: response.result === true ? 'Collection created' : 'Collection operation completed',\n    collection_name: originalData.name,\n    result: response.result\n  }\n};"
@@ -531,5 +567,6 @@
   ],
   "triggerCount": 0,
   "updatedAt": "2026-01-13T00:00:00.000Z",
-  "versionId": "2"
+  "versionId": "2",
+  "active": false
 }
