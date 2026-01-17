@@ -1,0 +1,101 @@
+{
+  "name": "Test Workflow With Dependencies",
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "exec-1",
+      "name": "Execute S3 Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [200, 0],
+      "parameters": {
+        "workflowId": "AI Product Factory - S3 Storage Operations"
+      }
+    },
+    {
+      "id": "exec-2",
+      "name": "Execute Decision Logger",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [400, 0],
+      "parameters": {
+        "workflowId": "AI Product Factory - Decision Logger"
+      }
+    },
+    {
+      "id": "tool-1",
+      "name": "Tool Workflow",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 1,
+      "position": [200, 200],
+      "parameters": {
+        "workflowId": "AI Product Factory - Perplexity Research"
+      }
+    },
+    {
+      "id": "exec-3",
+      "name": "Duplicate S3 Reference",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [400, 200],
+      "parameters": {
+        "workflowId": "AI Product Factory - S3 Storage Operations"
+      }
+    },
+    {
+      "id": "code-1",
+      "name": "Final Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 0],
+      "parameters": {
+        "jsCode": "return { json: { complete: true } };"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Execute S3 Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute S3 Workflow": {
+      "main": [
+        [
+          {
+            "node": "Execute Decision Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Decision Logger": {
+      "main": [
+        [
+          {
+            "node": "Final Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

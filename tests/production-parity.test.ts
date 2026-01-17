@@ -123,6 +123,7 @@ async function checkTcpPort(host: string, port: number, timeout = SERVICE_TIMEOU
 // Service Availability Detection
 // =============================================================================
 
+// Timeout for beforeAll: 60 seconds to allow checking all services
 beforeAll(async () => {
   console.log('\n📋 Production Parity Tests - Service Availability Check:');
 
@@ -172,7 +173,7 @@ beforeAll(async () => {
   console.log(`   Redis:      ${servicesAvailable.redis ? '✅ Available' : '❌ Not Available'}`);
 
   console.log('');
-});
+}, 60000); // 60 second timeout for checking all services
 
 // =============================================================================
 // Traefik Routing Tests

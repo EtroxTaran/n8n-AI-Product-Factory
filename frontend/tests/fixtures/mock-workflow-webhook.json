@@ -1,0 +1,75 @@
+{
+  "name": "Test Webhook Workflow",
+  "nodes": [
+    {
+      "id": "webhook-1",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {
+        "path": "test-webhook",
+        "httpMethod": "POST",
+        "responseMode": "onReceived"
+      }
+    },
+    {
+      "id": "form-1",
+      "name": "Form Trigger",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 1,
+      "position": [0, 200],
+      "parameters": {
+        "path": "test-form",
+        "formTitle": "Test Form"
+      }
+    },
+    {
+      "id": "chat-1",
+      "name": "Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1,
+      "position": [0, 400],
+      "parameters": {
+        "path": "test-chat"
+      }
+    },
+    {
+      "id": "webhook-2",
+      "name": "Secondary Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 600],
+      "parameters": {
+        "path": "/another-webhook",
+        "httpMethod": "GET"
+      }
+    },
+    {
+      "id": "code-1",
+      "name": "Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 0],
+      "parameters": {
+        "jsCode": "return { json: { received: true } };"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
