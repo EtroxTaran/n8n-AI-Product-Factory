@@ -175,11 +175,69 @@ export class Logger {
 
   /**
    * Log an error message
+   *
+   * Can be called in two ways:
+   * 1. error(message, context) - context may include an 'error' property
+   * 2. error(message, errorObject, context) - explicit error object
+   *
+   * The method auto-detects which signature is being used.
    */
-  error(message: string, error?: unknown, context?: LogContext): void {
-    outputLog(
-      createLogEntry("error", message, { ...this.context, ...context }, error)
-    );
+  error(
+    message: string,
+    errorOrContext?: unknown | LogContext,
+    context?: LogContext
+  ): void {
+    let finalContext: LogContext | undefined;
+    let errorObj: unknown;
+
+    // Auto-detect signature: if second arg looks like context (has typical context keys
+    // or is a plain object without Error properties), treat it as context
+    if (errorOrContext && typeof errorOrContext === "object") {
+      const obj = errorOrContext as Record<string, unknown>;
+
+      // Check if this looks like an Error object
+      const isErrorLike =
+        errorOrContext instanceof Error ||
+        (obj.message !== undefined &&
+          obj.name !== undefined &&
+          typeof obj.stack === "string");
+
+      // Check if this looks like a LogContext (has typical context keys)
+      const isContextLike =
+        !isErrorLike &&
+        (obj.correlationId !== undefined ||
+          obj.component !== undefined ||
+          obj.operation !== undefined ||
+          obj.method !== undefined ||
+          obj.path !== undefined ||
+          obj.filename !== undefined ||
+          obj.status !== undefined ||
+          obj.endpoint !== undefined);
+
+      if (isContextLike) {
+        // Second arg is context, extract 'error' property if present
+        finalContext = { ...this.context, ...obj } as LogContext;
+        errorObj = obj.error;
+        // Remove 'error' from context to avoid duplication
+        if (finalContext.error !== undefined) {
+          delete finalContext.error;
+        }
+      } else {
+        // Second arg is error object
+        errorObj = errorOrContext;
+        finalContext = context
+          ? { ...this.context, ...context }
+          : this.context;
+      }
+    } else if (errorOrContext) {
+      // Primitive error (string, number, etc.)
+      errorObj = errorOrContext;
+      finalContext = context ? { ...this.context, ...context } : this.context;
+    } else {
+      finalContext = this.context;
+    }
+
+    outputLog(createLogEntry("error", message, finalContext, errorObj));
   }
 }
 
