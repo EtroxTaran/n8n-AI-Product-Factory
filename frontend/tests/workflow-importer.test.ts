@@ -12,6 +12,41 @@ import simpleWorkflow from './fixtures/mock-workflow-simple.json';
 import webhookWorkflow from './fixtures/mock-workflow-webhook.json';
 import credentialsWorkflow from './fixtures/mock-workflow-credentials.json';
 import depsWorkflow from './fixtures/mock-workflow-deps.json';
+import workflowWithTags from './fixtures/mock-workflow-with-tags.json';
+
+// ============================================
+// n8n API Validation Helpers
+// ============================================
+// These helpers mimic real n8n API validation behavior to catch issues in tests
+
+interface WorkflowPayload {
+  name: string;
+  nodes: unknown[];
+  connections: Record<string, unknown>;
+  tags?: unknown[];
+  [key: string]: unknown;
+}
+
+/**
+ * Validate workflow payload like real n8n API does.
+ * Throws if payload contains read-only fields like 'tags'.
+ */
+function validateN8nWorkflowPayload(workflow: WorkflowPayload): void {
+  // n8n rejects requests with tags in the body - it's read-only
+  if (workflow.tags !== undefined) {
+    const error = new Error('n8n API error: 400 Bad Request - request/body/tags is read-only');
+    (error as Error & { statusCode: number }).statusCode = 400;
+    throw error;
+  }
+
+  // Validate required fields
+  if (!workflow.name) {
+    throw new Error('n8n API error: 400 Bad Request - name is required');
+  }
+  if (!Array.isArray(workflow.nodes)) {
+    throw new Error('n8n API error: 400 Bad Request - nodes must be an array');
+  }
+}
 
 // ============================================
 // Mock Setup - Use vi.hoisted to avoid hoisting issues
@@ -187,8 +222,18 @@ beforeEach(() => {
   mockExecute.mockResolvedValue({ rowCount: 1 });
 
   mockFindWorkflowByName.mockResolvedValue(null);
-  mockCreateWorkflow.mockResolvedValue({ ...mockWorkflowResponse, id: 'wf-new-123' });
-  mockUpdateWorkflow.mockResolvedValue({ ...mockWorkflowResponse, id: 'wf-existing-123' });
+
+  // n8n API mocks with validation that mimics real n8n behavior
+  mockCreateWorkflow.mockImplementation((workflow: WorkflowPayload) => {
+    validateN8nWorkflowPayload(workflow);
+    return Promise.resolve({ ...mockWorkflowResponse, id: 'wf-new-123', name: workflow.name });
+  });
+
+  mockUpdateWorkflow.mockImplementation((_id: string, workflow: WorkflowPayload) => {
+    validateN8nWorkflowPayload(workflow);
+    return Promise.resolve({ ...mockWorkflowResponse, id: 'wf-existing-123', name: workflow.name });
+  });
+
   mockActivateWorkflow.mockResolvedValue({ ...mockWorkflowResponse, active: true });
   mockExtractWebhookPaths.mockReturnValue([]);
 
@@ -209,6 +254,7 @@ describe('workflow-importer', () => {
   const webhookWorkflowStr = JSON.stringify(webhookWorkflow);
   const credentialsWorkflowStr = JSON.stringify(credentialsWorkflow);
   const depsWorkflowStr = JSON.stringify(depsWorkflow);
+  const workflowWithTagsStr = JSON.stringify(workflowWithTags);
 
   // ============================================
   // Checksum Calculation Tests
@@ -293,6 +339,75 @@ describe('workflow-importer', () => {
       const originalData = JSON.parse(credentialsWorkflowStr);
       const originalNodeWithCreds = originalData.nodes.find((n: { credentials?: object }) => n.credentials);
       expect(originalNodeWithCreds).toBeDefined();
+    });
+
+    it('should strip tags from workflow (tags are read-only in n8n API)', async () => {
+      mockReadFile.mockResolvedValue(workflowWithTagsStr);
+      mockAccess.mockResolvedValue(undefined);
+
+      const result = await readWorkflowFile('workflow-with-tags.json');
+
+      // Tags should NOT be in the parsed workflow
+      expect((result.workflow as WorkflowPayload).tags).toBeUndefined();
+
+      // Original fixture should have tags (verify test data is correct)
+      const originalData = JSON.parse(workflowWithTagsStr);
+      expect(originalData.tags).toBeDefined();
+      expect(originalData.tags).toHaveLength(2);
+    });
+  });
+
+  // ============================================
+  // n8n API Validation Tests
+  // ============================================
+
+  describe('n8n API validation (mock behavior)', () => {
+    it('should reject workflow with tags in createWorkflow', () => {
+      const workflowWithTags = {
+        name: 'Test',
+        nodes: [],
+        connections: {},
+        tags: [{ id: '1', name: 'test' }],
+      };
+
+      // Validation throws synchronously before promise is created
+      expect(() => mockCreateWorkflow(workflowWithTags)).toThrow('tags is read-only');
+    });
+
+    it('should reject workflow with tags in updateWorkflow', () => {
+      const workflowWithTags = {
+        name: 'Test',
+        nodes: [],
+        connections: {},
+        tags: [{ id: '1', name: 'test' }],
+      };
+
+      // Validation throws synchronously before promise is created
+      expect(() => mockUpdateWorkflow('wf-123', workflowWithTags)).toThrow('tags is read-only');
+    });
+
+    it('should accept workflow without tags in createWorkflow', async () => {
+      const workflowWithoutTags = {
+        name: 'Test',
+        nodes: [],
+        connections: {},
+      };
+
+      const result = await mockCreateWorkflow(workflowWithoutTags);
+      expect(result).toBeDefined();
+      expect(result.id).toBe('wf-new-123');
+    });
+
+    it('should accept workflow without tags in updateWorkflow', async () => {
+      const workflowWithoutTags = {
+        name: 'Test',
+        nodes: [],
+        connections: {},
+      };
+
+      const result = await mockUpdateWorkflow('wf-123', workflowWithoutTags);
+      expect(result).toBeDefined();
+      expect(result.id).toBe('wf-existing-123');
     });
   });
 
