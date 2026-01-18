@@ -10,6 +10,7 @@ import {
   RefreshCw,
   AlertTriangle,
   Clock,
+  RefreshCcw,
 } from "lucide-react";
 
 export interface WorkflowStatus {
@@ -33,6 +34,14 @@ export interface WorkflowStatus {
   lastError: string | null;
 }
 
+export interface SyncResult {
+  total: number;
+  synced: number;
+  deleted: number;
+  stateChanged: number;
+  errors: number;
+}
+
 interface SetupStepImportProps {
   workflows: WorkflowStatus[];
   isLoading: boolean;
@@ -45,6 +54,10 @@ interface SetupStepImportProps {
   } | null;
   onStartImport: () => void;
   onRetryFailed: () => void;
+  // Sync functionality
+  isSyncing?: boolean;
+  lastSyncResult?: SyncResult | null;
+  onSync?: () => void;
 }
 
 function getStatusIcon(status: WorkflowStatus["importStatus"]) {
@@ -94,6 +107,9 @@ export function SetupStepImport({
   importProgress,
   onStartImport,
   onRetryFailed,
+  isSyncing,
+  lastSyncResult,
+  onSync,
 }: SetupStepImportProps) {
   const importedCount = workflows.filter((w) => w.importStatus === "imported").length;
   const failedCount = workflows.filter(
@@ -223,12 +239,30 @@ export function SetupStepImport({
         )}
       </ScrollArea>
 
+      {/* Sync result banner */}
+      {lastSyncResult && (lastSyncResult.deleted > 0 || lastSyncResult.stateChanged > 0) && (
+        <div className="text-center p-3 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900">
+          <p className="text-sm text-amber-800 dark:text-amber-200">
+            <strong>Sync completed:</strong>{" "}
+            {lastSyncResult.deleted > 0 && (
+              <span>{lastSyncResult.deleted} workflow(s) were deleted from n8n. </span>
+            )}
+            {lastSyncResult.stateChanged > 0 && (
+              <span>{lastSyncResult.stateChanged} workflow(s) had state changes. </span>
+            )}
+            {lastSyncResult.errors > 0 && (
+              <span className="text-red-600">{lastSyncResult.errors} error(s) occurred.</span>
+            )}
+          </p>
+        </div>
+      )}
+
       {/* Action buttons */}
       <div className="flex justify-center gap-4">
         {!allImported && pendingCount > 0 && (
           <Button
             onClick={onStartImport}
-            disabled={isImporting || isLoading}
+            disabled={isImporting || isLoading || isSyncing}
             size="lg"
           >
             {isImporting ? (
@@ -250,9 +284,32 @@ export function SetupStepImport({
             onClick={onRetryFailed}
             variant="outline"
             size="lg"
+            disabled={isSyncing}
           >
             <RefreshCw className="w-4 h-4 mr-2" />
             Retry Failed ({failedCount})
+          </Button>
+        )}
+
+        {/* Sync button - always visible when there are imported workflows */}
+        {onSync && importedCount > 0 && (
+          <Button
+            onClick={onSync}
+            variant="outline"
+            size="lg"
+            disabled={isImporting || isLoading || isSyncing}
+          >
+            {isSyncing ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Syncing...
+              </>
+            ) : (
+              <>
+                <RefreshCcw className="w-4 h-4 mr-2" />
+                Sync with n8n
+              </>
+            )}
           </Button>
         )}
       </div>

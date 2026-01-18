@@ -10,6 +10,7 @@ import {
   activateWorkflowWithRetry,
   deleteWorkflow,
   findWorkflowByName,
+  listWorkflows,
   extractWebhookPaths,
   type WorkflowDefinition,
   type N8nWorkflow,
@@ -1149,4 +1150,166 @@ export async function getWorkflowStatus(
       lastError: entry?.last_error ?? null,
     };
   });
+}
+
+// ============================================
+// Workflow Sync (Registry ↔ n8n)
+// ============================================
+
+export interface SyncResult {
+  filename: string;
+  workflowName: string;
+  action: "no_change" | "marked_deleted" | "marked_inactive" | "marked_active" | "error";
+  previousStatus?: string;
+  newStatus?: string;
+  error?: string;
+}
+
+export interface SyncProgress {
+  total: number;
+  synced: number;
+  deleted: number;
+  stateChanged: number;
+  errors: number;
+  results: SyncResult[];
+}
+
+/**
+ * Sync workflow registry with actual n8n instance state.
+ *
+ * This function checks which workflows are actually deployed and active
+ * in n8n and updates the registry to reflect the true state.
+ *
+ * Use cases:
+ * - User manually deleted a workflow from n8n UI
+ * - User manually activated/deactivated a workflow in n8n UI
+ * - Dashboard shows stale state after n8n changes
+ *
+ * @returns SyncProgress with details of what changed
+ */
+export async function syncWorkflowRegistry(
+  options: { configOverride?: N8nApiConfig } = {}
+): Promise<SyncProgress> {
+  log.info("Starting workflow registry sync with n8n");
+
+  const progress: SyncProgress = {
+    total: 0,
+    synced: 0,
+    deleted: 0,
+    stateChanged: 0,
+    errors: 0,
+    results: [],
+  };
+
+  try {
+    // Get n8n config
+    const config = options.configOverride || (await getN8nConfig());
+    if (!config) {
+      throw new Error("n8n not configured");
+    }
+
+    // Get all workflows from n8n
+    const n8nWorkflows = await listWorkflows(config);
+    const n8nWorkflowMap = new Map<string, N8nWorkflow>();
+
+    // Index by both ID and name for lookups
+    for (const workflow of n8nWorkflows) {
+      n8nWorkflowMap.set(workflow.id, workflow);
+    }
+
+    // Get current registry state
+    const registry = await getWorkflowRegistry();
+    progress.total = registry.length;
+
+    // Check each registry entry against n8n
+    for (const entry of registry) {
+      const result: SyncResult = {
+        filename: entry.workflow_file,
+        workflowName: entry.workflow_name,
+        action: "no_change",
+      };
+
+      try {
+        // Skip entries that were never imported
+        if (!entry.n8n_workflow_id) {
+          result.action = "no_change";
+          progress.results.push(result);
+          progress.synced++;
+          continue;
+        }
+
+        // Check if workflow exists in n8n
+        const n8nWorkflow = n8nWorkflowMap.get(entry.n8n_workflow_id);
+
+        if (!n8nWorkflow) {
+          // Workflow was deleted from n8n
+          log.info("Workflow deleted from n8n, updating registry", {
+            filename: entry.workflow_file,
+            workflowId: entry.n8n_workflow_id,
+          });
+
+          await upsertWorkflowEntry({
+            workflow_file: entry.workflow_file,
+            n8n_workflow_id: null,
+            is_active: false,
+            import_status: "pending",
+            last_error: "Workflow was deleted from n8n instance",
+          });
+
+          result.action = "marked_deleted";
+          result.previousStatus = entry.import_status;
+          result.newStatus = "pending";
+          progress.deleted++;
+        } else if (n8nWorkflow.active !== entry.is_active) {
+          // Active state changed in n8n
+          log.info("Workflow active state changed in n8n, updating registry", {
+            filename: entry.workflow_file,
+            previousActive: entry.is_active,
+            currentActive: n8nWorkflow.active,
+          });
+
+          await upsertWorkflowEntry({
+            workflow_file: entry.workflow_file,
+            is_active: n8nWorkflow.active,
+            last_error: null,
+          });
+
+          result.action = n8nWorkflow.active ? "marked_active" : "marked_inactive";
+          result.previousStatus = entry.is_active ? "active" : "inactive";
+          result.newStatus = n8nWorkflow.active ? "active" : "inactive";
+          progress.stateChanged++;
+        } else {
+          result.action = "no_change";
+        }
+
+        progress.synced++;
+        progress.results.push(result);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        log.error("Failed to sync workflow entry", {
+          filename: entry.workflow_file,
+          error: errorMessage,
+        });
+
+        result.action = "error";
+        result.error = errorMessage;
+        progress.errors++;
+        progress.results.push(result);
+      }
+    }
+
+    log.info("Workflow registry sync complete", {
+      total: progress.total,
+      synced: progress.synced,
+      deleted: progress.deleted,
+      stateChanged: progress.stateChanged,
+      errors: progress.errors,
+    });
+
+    return progress;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log.error("Failed to sync workflow registry", { error: errorMessage });
+    throw error;
+  }
 }

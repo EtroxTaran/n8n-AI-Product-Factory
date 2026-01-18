@@ -20,7 +20,7 @@
 
 The **AI Product Factory** is an n8n-based AI orchestration system that generates comprehensive **Product Vision** and **Architecture** documents through multi-phase, collaborative AI agent workflows.
 
-**Version**: v3.0.6 (2026-01-18)
+**Version**: v3.0.7 (2026-01-19)
 
 ### Key Capabilities
 
@@ -191,7 +191,7 @@ product-factory-artifacts/
 
 ### Prerequisites
 
-1. n8n instance running at `https://c3po.etrox.de`
+1. n8n instance running at `https://n8n-genosis.etrox.de`
 2. MCP access enabled in n8n (Settings → Instance-level MCP)
 3. Workflows imported and marked "Available in MCP"
 4. Required credentials configured
@@ -210,7 +210,7 @@ Create `.mcp.json` in project root or `~/.claude.json` for user scope:
         "MCP_MODE": "stdio",
         "LOG_LEVEL": "error",
         "DISABLE_CONSOLE_OUTPUT": "true",
-        "N8N_API_URL": "https://c3po.etrox.de",
+        "N8N_API_URL": "https://n8n-genosis.etrox.de",
         "N8N_API_KEY": "${N8N_API_KEY}"
       }
     },
@@ -349,6 +349,7 @@ npm run test:env:down
 | `/api/setup/status` | GET | Setup wizard status (public) |
 | `/api/setup/n8n/test-connection` | POST | Test n8n connectivity |
 | `/api/setup/workflows/import` | POST | Import workflows to n8n (two-phase) |
+| `/api/workflows/sync` | POST | Sync registry with n8n instance state |
 | `/api/workflows/export` | POST | Export workflow as sanitized JSON |
 | `/api/workflows/export/commit` | POST | Export workflow and save to git |
 | `/api/settings/n8n` | GET/PUT | Manage n8n settings |
@@ -669,6 +670,7 @@ export MAX_MCP_OUTPUT_TOKENS=50000
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3.0.7 | 2026-01-19 | Workflow sync API to detect n8n changes (deletions, state changes) |
 | v3.0.6 | 2026-01-18 | Two-phase workflow import with rollback, workflow export API |
 | v3.0.5 | 2026-01-18 | Pre-commit hooks (husky) for workflow and TypeScript validation |
 | v3.0.4 | 2026-01-18 | Workflow import tests (94 tests), fixed tags read-only error |
@@ -685,7 +687,7 @@ See `EXPERT_CONTEXT.md` for comprehensive system documentation.
 
 ### Important URLs
 
-- **n8n Instance**: https://c3po.etrox.de
+- **n8n Instance**: https://n8n-genosis.etrox.de
 - **n8n Docs**: https://docs.n8n.io/advanced-ai/
 - **OpenAI Platform**: https://platform.openai.com
 

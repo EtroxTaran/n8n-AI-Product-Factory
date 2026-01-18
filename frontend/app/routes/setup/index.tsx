@@ -12,6 +12,7 @@ import {
   type WorkflowStatus,
   type WebhookInfo,
   type VerificationResult,
+  type SyncResult,
 } from "@/components/setup";
 import { RouteErrorBoundary } from "@/components/error/RouteErrorBoundary";
 import { RouteLoadingSpinner } from "@/components/loading/RouteLoadingSpinner";
@@ -39,7 +40,9 @@ interface SetupState {
   workflows: WorkflowStatus[];
   isLoadingWorkflows: boolean;
   isImporting: boolean;
-  importProgress: { current: string; completed: number; total: number } | null;
+  importProgress: { current: string; completed: number; total: number; phase?: "creating" | "activating" } | null;
+  isSyncing: boolean;
+  lastSyncResult: SyncResult | null;
 
   // Step 4: Webhooks
   webhooks: WebhookInfo[];
@@ -98,6 +101,8 @@ function SetupWizardPage() {
     isLoadingWorkflows: false,
     isImporting: false,
     importProgress: null,
+    isSyncing: false,
+    lastSyncResult: null,
     webhooks: [],
     verificationResults: initialVerificationResults,
     isVerifying: false,
@@ -276,6 +281,50 @@ function SetupWizardPage() {
         isImporting: false,
         importProgress: null,
       }));
+    }
+  };
+
+  // Sync workflows with n8n
+  const syncWorkflows = async () => {
+    setState((prev) => ({ ...prev, isSyncing: true, lastSyncResult: null }));
+
+    try {
+      const response = await fetch("/api/workflows/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await response.json();
+
+      if (data.success !== false) {
+        const syncResult: SyncResult = {
+          total: data.total,
+          synced: data.synced,
+          deleted: data.deleted,
+          stateChanged: data.stateChanged,
+          errors: data.errors,
+        };
+
+        setState((prev) => ({
+          ...prev,
+          lastSyncResult: syncResult,
+        }));
+
+        if (data.deleted > 0 || data.stateChanged > 0) {
+          toast.success(
+            `Sync complete: ${data.deleted} deleted, ${data.stateChanged} changed`
+          );
+          // Refresh workflow list to show updated state
+          await loadWorkflows();
+        } else {
+          toast.success("Sync complete: No changes detected");
+        }
+      } else {
+        toast.error(data.error || "Sync failed");
+      }
+    } catch {
+      toast.error("Failed to sync with n8n");
+    } finally {
+      setState((prev) => ({ ...prev, isSyncing: false }));
     }
   };
 
@@ -505,6 +554,9 @@ function SetupWizardPage() {
             importProgress={state.importProgress}
             onStartImport={startImport}
             onRetryFailed={retryFailed}
+            isSyncing={state.isSyncing}
+            lastSyncResult={state.lastSyncResult}
+            onSync={syncWorkflows}
           />
         );
       case 3:
