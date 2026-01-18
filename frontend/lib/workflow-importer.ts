@@ -185,7 +185,8 @@ function parseWorkflowFile(
     connections: data.connections || {},
     settings: data.settings,
     staticData: data.staticData,
-    tags: data.tags,
+    // NOTE: tags field is read-only in n8n API - cannot be set during create/update
+    // Tags must be managed separately via the n8n UI or tags API endpoint
   };
 }
 
