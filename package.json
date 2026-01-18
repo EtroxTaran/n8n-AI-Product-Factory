@@ -17,6 +17,8 @@
     "test:watch": "vitest tests/",
     "test:coverage": "vitest run --coverage",
     "test:backend": "vitest run tests/backend.test.ts",
+    "test:workflows": "vitest run tests/workflow-import.test.ts",
+    "test:workflows:integration": "vitest run tests/workflow-import.test.ts --testNamePattern='n8n API'",
     "test:frontend": "cd frontend && npm run test",
     "test:sync-dry-run": "bash scripts/test-sync-dry-run.sh",
     "test:migration": "bash scripts/test-migration-idempotency.sh",

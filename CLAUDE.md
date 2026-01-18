@@ -19,7 +19,7 @@
 
 The **AI Product Factory** is an n8n-based AI orchestration system that generates comprehensive **Product Vision** and **Architecture** documents through multi-phase, collaborative AI agent workflows.
 
-**Version**: v3.0.3 (2026-01-18)
+**Version**: v3.0.4 (2026-01-18)
 
 ### Key Capabilities
 
@@ -238,6 +238,37 @@ risk_mitigation   → Mitigation strategies and case studies
 competitive_analysis → Competitor intelligence
 ```
 
+### Editing Workflows
+
+**IMPORTANT**: After editing any workflow JSON file, you MUST validate the changes:
+
+```bash
+# Quick validation (unit tests only - no n8n required)
+npm run test:workflows
+
+# Full validation with n8n import test (requires test environment)
+npm run test:env:up
+N8N_API_KEY=<your-key> npm run test:workflows
+npm run test:env:down
+```
+
+**What the tests validate:**
+- All 8 workflow files exist and are valid JSON
+- Required fields: `name`, `nodes`, `connections`
+- Node structure: `id`, `name`, `type`, `typeVersion`, `position`, `parameters`
+- Unique node IDs and names within each workflow
+- Credentials are stripped for fresh imports
+- Forbidden API fields are removed (`tags`, `active`, `pinData`, etc.)
+- Actual import/update to n8n API succeeds
+
+**Common workflow editing mistakes:**
+| Mistake | Result | Fix |
+|---------|--------|-----|
+| Including `tags` with IDs | `tags is read-only` error | Remove tags or use name-only format |
+| Duplicate node IDs | Import fails silently | Ensure unique IDs |
+| Invalid node type | Workflow won't execute | Check n8n node documentation |
+| Missing `settings` | API may reject | Include `settings: { executionOrder: "v1" }` |
+
 ---
 
 ## Dashboard
@@ -406,6 +437,8 @@ npm run start:migrate       # Run migrations + start server
 |---------|-------------|
 | `npm run test:all` | Full test cycle: start env → test → cleanup |
 | `npm run test:backend` | Backend tests only |
+| `npm run test:workflows` | Validate workflow JSON files (94 tests) |
+| `npm run test:workflows:integration` | Workflow import tests (requires n8n) |
 | `npm run test:frontend` | Frontend tests only |
 | `npm run test:integration` | Integration tests (79 tests) |
 | `npm run test:e2e` | E2E tests |
@@ -417,6 +450,8 @@ npm run start:migrate       # Run migrations + start server
 ```
 tests/
 ├── backend.test.ts           # Backend unit tests
+├── workflow-import.test.ts   # Workflow file validation (94 tests)
+├── n8n-integration.test.ts   # n8n API tests
 ├── production-parity.test.ts # Production parity tests
 ├── integration/              # Integration suite (79 tests)
 │   ├── 01-file-upload.test.ts
@@ -572,6 +607,7 @@ export MAX_MCP_OUTPUT_TOKENS=50000
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3.0.4 | 2026-01-18 | Workflow import tests (94 tests), fixed tags read-only error |
 | v3.0.3 | 2026-01-18 | Automatic database migrations via init container pattern |
 | v3.0.2 | 2026-01-18 | Integration test suite (79 tests), EXPERT_CONTEXT.md |
 | v3.0.1 | 2026-01-16 | Resilient database queries with fallbacks |
