@@ -101,10 +101,31 @@ async function n8nFetch<T>(
     }
 
     // Extract human-readable error message from n8n response
+    // Handle nested error structures like { error: { message: "..." } }
     let errorDetail = "";
     if (typeof errorBody === "object" && errorBody !== null) {
       const errObj = errorBody as Record<string, unknown>;
-      errorDetail = (errObj.message || errObj.error || errObj.reason || "") as string;
+
+      // Check for nested error.message first
+      if (typeof errObj.error === "object" && errObj.error !== null) {
+        const nestedErr = errObj.error as Record<string, unknown>;
+        if (typeof nestedErr.message === "string") {
+          errorDetail = nestedErr.message;
+        }
+      }
+
+      // Fall back to top-level fields
+      if (!errorDetail) {
+        if (typeof errObj.message === "string") {
+          errorDetail = errObj.message;
+        } else if (typeof errObj.error === "string") {
+          errorDetail = errObj.error;
+        } else if (typeof errObj.reason === "string") {
+          errorDetail = errObj.reason;
+        }
+      }
+
+      // Check for errors array
       if (!errorDetail && errObj.errors && Array.isArray(errObj.errors)) {
         // n8n sometimes returns errors as an array
         errorDetail = errObj.errors.map((e: unknown) =>

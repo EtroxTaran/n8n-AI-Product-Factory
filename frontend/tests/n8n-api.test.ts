@@ -41,6 +41,8 @@ import {
   deleteWorkflow,
   activateWorkflow,
   deactivateWorkflow,
+  activateWorkflowWithRetry,
+  verifyWorkflowActive,
   findWorkflowByName,
   healthCheck,
   comprehensiveHealthCheck,
@@ -933,6 +935,340 @@ describe('n8n-api', () => {
       );
 
       await expect(listWorkflows(mockN8nConfig)).rejects.toThrow();
+    });
+  });
+
+  // ============================================
+  // verifyWorkflowActive
+  // ============================================
+
+  describe('verifyWorkflowActive', () => {
+    const workflowId = 'wf-verify-test';
+
+    it('should return true when workflow is active on first check', async () => {
+      globalThis.fetch = createMockFetch({
+        [`/workflows/${workflowId}`]: {
+          status: 200,
+          body: { ...mockWorkflowResponse, id: workflowId, active: true },
+        },
+      });
+
+      const result = await verifyWorkflowActive(workflowId, mockN8nConfig, {
+        maxAttempts: 3,
+        delayMs: 10, // Short delay for tests
+      });
+
+      expect(result).toBe(true);
+    });
+
+    it('should return false when workflow is not active after max attempts', async () => {
+      globalThis.fetch = createMockFetch({
+        [`/workflows/${workflowId}`]: {
+          status: 200,
+          body: { ...mockWorkflowResponse, id: workflowId, active: false },
+        },
+      });
+
+      const result = await verifyWorkflowActive(workflowId, mockN8nConfig, {
+        maxAttempts: 2,
+        delayMs: 10,
+      });
+
+      expect(result).toBe(false);
+    });
+
+    it('should poll multiple times until workflow becomes active', async () => {
+      let callCount = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        const isActive = callCount >= 3; // Becomes active on 3rd call
+        return new Response(
+          JSON.stringify({ ...mockWorkflowResponse, id: workflowId, active: isActive }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      const result = await verifyWorkflowActive(workflowId, mockN8nConfig, {
+        maxAttempts: 5,
+        delayMs: 10,
+      });
+
+      expect(result).toBe(true);
+      expect(callCount).toBe(3);
+    });
+
+    it('should handle API errors gracefully during verification', async () => {
+      globalThis.fetch = createMockFetch({
+        [`/workflows/${workflowId}`]: {
+          status: 500,
+          body: { message: 'Internal server error' },
+        },
+      });
+
+      const result = await verifyWorkflowActive(workflowId, mockN8nConfig, {
+        maxAttempts: 2,
+        delayMs: 10,
+      });
+
+      expect(result).toBe(false);
+    });
+
+    it('should recover from transient errors', async () => {
+      let callCount = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        // First call fails, second succeeds
+        if (callCount === 1) {
+          return new Response(
+            JSON.stringify({ message: 'Temporary error' }),
+            { status: 500 }
+          );
+        }
+        return new Response(
+          JSON.stringify({ ...mockWorkflowResponse, id: workflowId, active: true }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      const result = await verifyWorkflowActive(workflowId, mockN8nConfig, {
+        maxAttempts: 3,
+        delayMs: 10,
+      });
+
+      expect(result).toBe(true);
+      expect(callCount).toBe(2);
+    });
+  });
+
+  // ============================================
+  // activateWorkflowWithRetry
+  // ============================================
+
+  describe('activateWorkflowWithRetry', () => {
+    const workflowId = 'wf-retry-test';
+
+    it('should activate workflow on first attempt', async () => {
+      globalThis.fetch = createMockFetch({
+        [`/workflows/${workflowId}/activate`]: {
+          status: 200,
+          body: { ...mockWorkflowResponse, id: workflowId, active: true },
+        },
+      });
+
+      const result = await activateWorkflowWithRetry(workflowId, mockN8nConfig, {
+        maxRetries: 3,
+        initialDelayMs: 10,
+      });
+
+      expect(result.active).toBe(true);
+    });
+
+    it('should retry on subworkflow "not published" error', async () => {
+      let callCount = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        // First 2 calls fail with subworkflow error, 3rd succeeds
+        if (callCount < 3) {
+          return new Response(
+            JSON.stringify({
+              message: "This workflow references workflow 'S3 Workflow' which is not published",
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({ ...mockWorkflowResponse, id: workflowId, active: true }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      const result = await activateWorkflowWithRetry(workflowId, mockN8nConfig, {
+        maxRetries: 5,
+        initialDelayMs: 10,
+      });
+
+      expect(result.active).toBe(true);
+      expect(callCount).toBe(3);
+    });
+
+    it('should retry on "references workflow" error', async () => {
+      let callCount = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount < 2) {
+          return new Response(
+            JSON.stringify({
+              message: "Workflow references workflow that cannot be found",
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({ ...mockWorkflowResponse, id: workflowId, active: true }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      const result = await activateWorkflowWithRetry(workflowId, mockN8nConfig, {
+        maxRetries: 3,
+        initialDelayMs: 10,
+      });
+
+      expect(result.active).toBe(true);
+      expect(callCount).toBe(2);
+    });
+
+    it('should retry on "Cannot publish workflow" error', async () => {
+      let callCount = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount < 2) {
+          return new Response(
+            JSON.stringify({
+              message: "Cannot publish workflow: subworkflow not ready",
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({ ...mockWorkflowResponse, id: workflowId, active: true }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      const result = await activateWorkflowWithRetry(workflowId, mockN8nConfig, {
+        maxRetries: 3,
+        initialDelayMs: 10,
+      });
+
+      expect(result.active).toBe(true);
+      expect(callCount).toBe(2);
+    });
+
+    it('should NOT retry on non-subworkflow errors', async () => {
+      let callCount = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        return new Response(
+          JSON.stringify({
+            message: "Missing credentials for node 'OpenAI'",
+          }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      await expect(
+        activateWorkflowWithRetry(workflowId, mockN8nConfig, {
+          maxRetries: 5,
+          initialDelayMs: 10,
+        })
+      ).rejects.toThrow();
+
+      // Should only try once since it's not a subworkflow error
+      expect(callCount).toBe(1);
+    });
+
+    it('should fail after max retries exhausted', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        return new Response(
+          JSON.stringify({
+            message: "Workflow references workflow 'Test' which is not published",
+          }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      await expect(
+        activateWorkflowWithRetry(workflowId, mockN8nConfig, {
+          maxRetries: 2,
+          initialDelayMs: 10,
+        })
+      ).rejects.toThrow(/after 3 attempts/);
+
+      // Should have tried maxRetries + 1 times (initial + retries)
+      expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('should detect case-insensitive error patterns', async () => {
+      let callCount = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount < 2) {
+          return new Response(
+            JSON.stringify({
+              message: "THIS WORKFLOW IS NOT PUBLISHED",
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({ ...mockWorkflowResponse, id: workflowId, active: true }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      const result = await activateWorkflowWithRetry(workflowId, mockN8nConfig, {
+        maxRetries: 3,
+        initialDelayMs: 10,
+      });
+
+      expect(result.active).toBe(true);
+    });
+
+    it('should detect "execute workflow" subworkflow errors', async () => {
+      let callCount = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount < 2) {
+          return new Response(
+            JSON.stringify({
+              message: "Failed to execute workflow 'Child Workflow'",
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({ ...mockWorkflowResponse, id: workflowId, active: true }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      const result = await activateWorkflowWithRetry(workflowId, mockN8nConfig, {
+        maxRetries: 3,
+        initialDelayMs: 10,
+      });
+
+      expect(result.active).toBe(true);
+      expect(callCount).toBe(2);
+    });
+
+    it('should handle nested error message objects', async () => {
+      let callCount = 0;
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount < 2) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                message: "Workflow not published",
+              },
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({ ...mockWorkflowResponse, id: workflowId, active: true }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      });
+
+      // This tests that even with nested error structures, the function handles it
+      const result = await activateWorkflowWithRetry(workflowId, mockN8nConfig, {
+        maxRetries: 3,
+        initialDelayMs: 10,
+      });
+
+      expect(result.active).toBe(true);
     });
   });
 });
