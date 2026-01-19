@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getServerSession } from "@/lib/auth";
-import { getN8nConfig } from "@/lib/settings";
+import { getN8nConfig, clearN8nConfig, clearAllSettings } from "@/lib/settings";
 import {
   performFullReset,
   type ResetResult,
@@ -12,6 +12,16 @@ import {
   logRequestError,
   withCorrelationId,
 } from "@/lib/request-context";
+import { execute } from "@/lib/db";
+
+/**
+ * Reset mode options:
+ * - soft: Clear registry only, workflows remain in n8n
+ * - full: Delete workflows from n8n + clear registry
+ * - clear_config: Clear n8n URL/key only
+ * - factory: Delete from n8n + clear all settings + reset setup wizard
+ */
+type ResetMode = "soft" | "full" | "clear_config" | "factory";
 
 /**
  * Request body for the reset endpoint.
@@ -21,8 +31,10 @@ interface ResetRequest {
    * Reset mode:
    * - soft: Clear registry and settings only (workflows remain in n8n)
    * - full: Delete workflows from n8n, then clear registry and settings
+   * - clear_config: Clear n8n URL and API key only
+   * - factory: Full reset + clear all settings + reset setup wizard
    */
-  mode: "soft" | "full";
+  mode: ResetMode;
 
   /**
    * Confirmation string - must be "RESET" to proceed.
@@ -31,10 +43,16 @@ interface ResetRequest {
   confirmation: string;
 
   /**
-   * Keep n8n API URL/key after reset (default: false for full, true for soft).
+   * Keep n8n API URL/key after reset (default: false for full/factory, true for soft).
    * Useful if you want to re-import to the same n8n instance.
    */
   preserveN8nConfig?: boolean;
+
+  /**
+   * Preserve the audit log (decision_log_entries) during reset.
+   * Default: true for compliance purposes.
+   */
+  preserveAuditLog?: boolean;
 }
 
 /**
@@ -42,13 +60,24 @@ interface ResetRequest {
  */
 interface ResetResponse {
   success: boolean;
-  mode: "soft" | "full";
+  mode: ResetMode;
   deletedFromN8n: number;
   clearedFromRegistry: number;
   settingsReset: boolean;
+  setupWizardReset: boolean;
   errors: string[];
   warnings: string[];
+  actions: {
+    workflowsDeactivated: number;
+    workflowsDeleted: number;
+    registryCleared: number;
+    settingsReset: string[];
+  };
+  canUndo: boolean;
+  undoToken?: string;
 }
+
+const VALID_MODES: ResetMode[] = ["soft", "full", "clear_config", "factory"];
 
 /**
  * POST /api/setup/reset
@@ -58,15 +87,23 @@ interface ResetResponse {
  * This is a destructive operation that requires a confirmation string.
  *
  * Modes:
- * - soft: Clears the workflow registry and setup wizard state, but leaves
+ * - soft: Clears the workflow registry only, but leaves
  *         workflows in the n8n instance. Use this to re-import workflows
  *         from scratch without deleting them from n8n.
  *
  * - full: Deactivates and deletes all Product Factory workflows from n8n,
- *         then clears the registry and setup wizard state. Use this to
- *         completely remove all traces of the Product Factory from n8n.
+ *         then clears the registry. Use this to completely remove all
+ *         Product Factory workflows from n8n.
  *
- * After a reset, the user will need to go through the setup wizard again.
+ * - clear_config: Clears only the n8n URL and API key. Use this when
+ *         switching to a different n8n instance.
+ *
+ * - factory: Deactivates and deletes all workflows from n8n, clears the
+ *         registry, clears all settings, and resets the setup wizard.
+ *         Use this to start completely fresh.
+ *
+ * After a full or factory reset, the user will need to go through the
+ * setup wizard again.
  */
 export const Route = createFileRoute("/api/setup/reset")({
   server: {
@@ -104,9 +141,9 @@ export const Route = createFileRoute("/api/setup/reset")({
           }
 
           // Validate required fields
-          if (!body.mode || !["soft", "full"].includes(body.mode)) {
+          if (!body.mode || !VALID_MODES.includes(body.mode)) {
             const response = Response.json(
-              { error: "Invalid mode. Must be 'soft' or 'full'" },
+              { error: `Invalid mode. Must be one of: ${VALID_MODES.join(", ")}` },
               { status: 400 }
             );
             logRequestComplete(ctx, 400, Date.now() - startTime);
@@ -126,52 +163,130 @@ export const Route = createFileRoute("/api/setup/reset")({
           log.info("Starting setup reset", {
             mode: body.mode,
             preserveN8nConfig: body.preserveN8nConfig,
+            preserveAuditLog: body.preserveAuditLog,
             userId: session.user.id,
           });
 
-          // Get n8n config for full reset
+          // Initialize response
+          const responseBody: ResetResponse = {
+            success: false,
+            mode: body.mode,
+            deletedFromN8n: 0,
+            clearedFromRegistry: 0,
+            settingsReset: false,
+            setupWizardReset: false,
+            errors: [],
+            warnings: [],
+            actions: {
+              workflowsDeactivated: 0,
+              workflowsDeleted: 0,
+              registryCleared: 0,
+              settingsReset: [],
+            },
+            canUndo: false,
+          };
+
+          // Handle clear_config mode specially (simpler operation)
+          if (body.mode === "clear_config") {
+            try {
+              await clearN8nConfig();
+              responseBody.success = true;
+              responseBody.settingsReset = true;
+              responseBody.actions.settingsReset = ["n8n.api_url", "n8n.api_key", "n8n.webhook_base_url"];
+              log.info("Cleared n8n configuration");
+            } catch (error) {
+              responseBody.errors.push(
+                error instanceof Error ? error.message : "Failed to clear n8n config"
+              );
+            }
+
+            const response = Response.json(responseBody, {
+              status: responseBody.success ? 200 : 500,
+            });
+            logRequestComplete(ctx, responseBody.success ? 200 : 500, Date.now() - startTime);
+            return withCorrelationId(response, ctx.correlationId);
+          }
+
+          // Get n8n config for full/factory reset
           let config;
-          if (body.mode === "full") {
+          if (body.mode === "full" || body.mode === "factory") {
             config = await getN8nConfig();
             if (!config) {
-              log.warn("n8n not configured, full reset will skip n8n deletion");
+              log.warn("n8n not configured, reset will skip n8n deletion");
+              responseBody.warnings.push(
+                "n8n not configured - skipping workflow deletion from n8n instance"
+              );
             }
           }
 
-          // Perform the reset
+          // Perform the workflow reset (soft or full)
+          const effectiveMode = body.mode === "factory" ? "full" : body.mode;
           const result: ResetResult = await performFullReset({
-            mode: body.mode,
-            preserveN8nConfig: body.preserveN8nConfig,
+            mode: effectiveMode as "soft" | "full",
+            preserveN8nConfig: body.mode === "soft" ? true : (body.preserveN8nConfig ?? false),
             configOverride: config ?? undefined,
           });
 
+          // Update response with result
+          responseBody.deletedFromN8n = result.deletedFromN8n;
+          responseBody.clearedFromRegistry = result.clearedFromRegistry;
+          responseBody.settingsReset = result.settingsReset;
+          responseBody.errors.push(...result.errors);
+          responseBody.warnings.push(...result.warnings);
+          responseBody.actions.workflowsDeleted = result.deletedFromN8n;
+          responseBody.actions.registryCleared = result.clearedFromRegistry;
+
+          // For factory reset, also clear all settings and reset setup wizard
+          if (body.mode === "factory") {
+            try {
+              // Clear all settings except audit log if requested
+              const preserveAuditLog = body.preserveAuditLog !== false;
+              await clearAllSettings({ preserveAuditLog });
+              responseBody.actions.settingsReset.push("all_settings");
+              log.info("Cleared all settings", { preserveAuditLog });
+
+              // Reset setup wizard state
+              try {
+                await execute(
+                  `DELETE FROM app_settings WHERE setting_key LIKE 'setup.%'`
+                );
+                responseBody.setupWizardReset = true;
+                responseBody.actions.settingsReset.push("setup_wizard");
+                log.info("Reset setup wizard state");
+              } catch (error) {
+                responseBody.warnings.push(
+                  "Failed to reset setup wizard state"
+                );
+                log.warn("Failed to reset setup wizard state", { error });
+              }
+            } catch (error) {
+              responseBody.errors.push(
+                error instanceof Error ? error.message : "Failed to clear settings"
+              );
+            }
+          }
+
+          // Determine overall success
+          responseBody.success = result.success && responseBody.errors.length === 0;
+
           log.info("Setup reset complete", {
-            mode: result.mode,
-            success: result.success,
-            deletedFromN8n: result.deletedFromN8n,
-            clearedFromRegistry: result.clearedFromRegistry,
-            settingsReset: result.settingsReset,
-            errors: result.errors.length,
-            warnings: result.warnings.length,
+            mode: body.mode,
+            success: responseBody.success,
+            deletedFromN8n: responseBody.deletedFromN8n,
+            clearedFromRegistry: responseBody.clearedFromRegistry,
+            settingsReset: responseBody.settingsReset,
+            setupWizardReset: responseBody.setupWizardReset,
+            errors: responseBody.errors.length,
+            warnings: responseBody.warnings.length,
           });
 
-          const responseBody: ResetResponse = {
-            success: result.success,
-            mode: result.mode,
-            deletedFromN8n: result.deletedFromN8n,
-            clearedFromRegistry: result.clearedFromRegistry,
-            settingsReset: result.settingsReset,
-            errors: result.errors,
-            warnings: result.warnings,
-          };
-
           const response = Response.json(responseBody, {
-            status: result.success ? 200 : 500,
+            status: responseBody.success ? 200 : 500,
           });
 
           logRequestComplete(
             ctx,
-            result.success ? 200 : 500,
+            responseBody.success ? 200 : 500,
             Date.now() - startTime
           );
           return withCorrelationId(response, ctx.correlationId);

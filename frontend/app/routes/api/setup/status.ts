@@ -34,6 +34,8 @@ export const Route = createFileRoute("/api/setup/status")({
             n8nConfigured: status.n8nConfigured,
             workflowsImported: status.workflowsImported,
             workflowsTotal: status.workflowsTotal,
+            workflowsPending: status.workflowsPending,
+            workflowsFailed: status.workflowsFailed,
             lastHealthCheck: status.lastHealthCheck,
             apiUrl: n8nConfig?.apiUrl || null,
             webhookBaseUrl: n8nConfig?.webhookBaseUrl || null,

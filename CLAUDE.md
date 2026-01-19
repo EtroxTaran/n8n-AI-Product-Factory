@@ -20,7 +20,7 @@
 
 The **AI Product Factory** is an n8n-based AI orchestration system that generates comprehensive **Product Vision** and **Architecture** documents through multi-phase, collaborative AI agent workflows.
 
-**Version**: v3.0.11 (2026-01-19)
+**Version**: v3.0.12 (2026-01-19)
 
 ### Key Capabilities
 
@@ -34,6 +34,7 @@ The **AI Product Factory** is an n8n-based AI orchestration system that generate
 | **Research Integration** | Perplexity for fact-checking and risk research |
 | **Dashboard UI** | React app with Google OAuth, ADR viewer, artifact management |
 | **Setup Wizard** | 6-step guided n8n integration configuration |
+| **State Management** | UI for registry sync, stuck import fixes, soft/full/factory reset |
 
 ---
 
@@ -350,8 +351,10 @@ npm run test:env:down
 | `/api/setup/n8n/test-connection` | POST | Test n8n connectivity |
 | `/api/setup/workflows/import` | POST | Import workflows to n8n (two-phase) |
 | `/api/workflows/sync` | POST | Sync registry with n8n instance state |
+| `/api/workflows/fix-stuck` | POST | Reset stuck imports to pending |
 | `/api/workflows/export` | POST | Export workflow as sanitized JSON |
 | `/api/workflows/export/commit` | POST | Export workflow and save to git |
+| `/api/setup/reset` | POST | Reset workflow setup (soft/full/clear_config/factory) |
 | `/api/settings/n8n` | GET/PUT | Manage n8n settings |
 
 ### Setup Wizard
@@ -711,6 +714,7 @@ export MAX_MCP_OUTPUT_TOKENS=50000
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3.0.12 | 2026-01-19 | State management UI: StateManagement component on settings page, reset modes (soft/full/clear_config/factory), fix-stuck API, workflow status counts (pending/failed) |
 | v3.0.11 | 2026-01-19 | Usability optimization: shared EmptyState component, status utilities, accessibility (aria-labels, aria-hidden), GovernanceWidget performance fix, error handling improvements |
 | v3.0.10 | 2026-01-19 | Phase B UI: Dry-run preview, dependency visualization, validation display |
 | v3.0.9 | 2026-01-19 | Dependency graph API, dry-run import mode, SSE streaming for real-time progress |

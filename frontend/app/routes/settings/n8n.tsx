@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import {
 import { RouteErrorBoundary } from "@/components/error/RouteErrorBoundary";
 import { RouteLoadingSpinner } from "@/components/loading/RouteLoadingSpinner";
 import { requireAuth } from "@/lib/auth-guard";
+import { StateManagement, type WorkflowState } from "@/components/settings/StateManagement";
 
 export const Route = createFileRoute("/settings/n8n")({
   beforeLoad: async ({ location }) => {
@@ -41,6 +42,10 @@ interface N8nStatus {
     healthy: boolean;
   };
   n8nVersion?: string;
+  workflowsImported?: number;
+  workflowsPending?: number;
+  workflowsFailed?: number;
+  workflowsTotal?: number;
 }
 
 function N8nSettingsPage() {
@@ -56,34 +61,49 @@ function N8nSettingsPage() {
   const [connectionStatus, setConnectionStatus] = useState<"idle" | "success" | "error">("idle");
 
   // Load current settings
-  useEffect(() => {
-    async function loadSettings() {
-      try {
-        const response = await fetch("/api/setup/status");
-        const data = await response.json();
+  const loadSettings = useCallback(async () => {
+    try {
+      const response = await fetch("/api/setup/status");
+      const data = await response.json();
 
-        setStatus({
-          configured: data.n8nConfigured,
-          apiUrl: data.apiUrl,
-          webhookBaseUrl: data.webhookBaseUrl,
-          lastHealthCheck: data.lastHealthCheck,
-        });
+      setStatus({
+        configured: data.n8nConfigured,
+        apiUrl: data.apiUrl,
+        webhookBaseUrl: data.webhookBaseUrl,
+        lastHealthCheck: data.lastHealthCheck,
+        workflowsImported: data.workflowsImported ?? 0,
+        workflowsPending: data.workflowsPending ?? 0,
+        workflowsFailed: data.workflowsFailed ?? 0,
+        workflowsTotal: data.workflowsTotal ?? 0,
+      });
 
-        if (data.apiUrl) {
-          setApiUrl(data.apiUrl);
-        }
-        if (data.webhookBaseUrl) {
-          setWebhookBaseUrl(data.webhookBaseUrl);
-        }
-      } catch {
-        toast.error("Failed to load settings");
-      } finally {
-        setIsLoading(false);
+      if (data.apiUrl) {
+        setApiUrl(data.apiUrl);
       }
+      if (data.webhookBaseUrl) {
+        setWebhookBaseUrl(data.webhookBaseUrl);
+      }
+    } catch {
+      toast.error("Failed to load settings");
+    } finally {
+      setIsLoading(false);
     }
-
-    loadSettings();
   }, []);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
+
+  // Create workflow state object for StateManagement component
+  const workflowState: WorkflowState = {
+    workflowsImported: status?.workflowsImported ?? 0,
+    workflowsPending: status?.workflowsPending ?? 0,
+    workflowsFailed: status?.workflowsFailed ?? 0,
+    workflowsTotal: status?.workflowsTotal ?? 0,
+    lastSync: null, // Will be populated from sync results
+    n8nHealthy: status?.lastHealthCheck?.healthy ?? false,
+    n8nConfigured: status?.configured ?? false,
+  };
 
   // Test connection
   const testConnection = async () => {
@@ -430,6 +450,15 @@ function N8nSettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* State Management - only show when configured */}
+      {status?.configured && (
+        <StateManagement
+          currentState={workflowState}
+          isLoading={isLoading}
+          onRefresh={loadSettings}
+        />
+      )}
     </div>
   );
 }

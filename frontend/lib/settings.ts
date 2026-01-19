@@ -387,6 +387,8 @@ async function getSetupStatusFallback(): Promise<{
   wizard_completed: boolean;
   workflows_imported: string;
   workflows_total: string;
+  workflows_pending: string;
+  workflows_failed: string;
 }> {
   try {
     // Get n8n configuration status
@@ -398,18 +400,29 @@ async function getSetupStatusFallback(): Promise<{
     // Get workflow counts from workflow_registry
     let workflowsImported = "0";
     let workflowsTotal = "0";
+    let workflowsPending = "0";
+    let workflowsFailed = "0";
 
     try {
-      const countResult = await queryOne<{ imported: string; total: string }>(`
+      const countResult = await queryOne<{
+        imported: string;
+        total: string;
+        pending: string;
+        failed: string;
+      }>(`
         SELECT
           COUNT(*) FILTER (WHERE import_status = 'imported')::text AS imported,
-          COUNT(*)::text AS total
+          COUNT(*)::text AS total,
+          COUNT(*) FILTER (WHERE import_status IN ('pending', 'importing', 'updating'))::text AS pending,
+          COUNT(*) FILTER (WHERE import_status = 'failed')::text AS failed
         FROM workflow_registry
       `);
 
       if (countResult) {
         workflowsImported = countResult.imported;
         workflowsTotal = countResult.total;
+        workflowsPending = countResult.pending;
+        workflowsFailed = countResult.failed;
       }
     } catch (workflowError) {
       // workflow_registry may not exist - that's okay
@@ -423,6 +436,8 @@ async function getSetupStatusFallback(): Promise<{
       wizard_completed: wizardCompleted,
       workflows_imported: workflowsImported,
       workflows_total: workflowsTotal,
+      workflows_pending: workflowsPending,
+      workflows_failed: workflowsFailed,
     };
   } catch (error) {
     log.error("getSetupStatusFallback failed", { error });
@@ -432,6 +447,8 @@ async function getSetupStatusFallback(): Promise<{
       wizard_completed: false,
       workflows_imported: "0",
       workflows_total: "0",
+      workflows_pending: "0",
+      workflows_failed: "0",
     };
   }
 }
@@ -627,6 +644,8 @@ export async function getSetupStatus(): Promise<{
   n8nConfigured: boolean;
   workflowsImported: number;
   workflowsTotal: number;
+  workflowsPending: number;
+  workflowsFailed: number;
   lastHealthCheck: { timestamp: string; healthy: boolean } | null;
 }> {
   let status: {
@@ -634,16 +653,38 @@ export async function getSetupStatus(): Promise<{
     wizard_completed: boolean;
     workflows_imported: string;
     workflows_total: string;
+    workflows_pending?: string;
+    workflows_failed?: string;
   } | null = null;
 
   try {
-    // Try to use the optimized view
+    // Try to use the optimized view (may not have pending/failed columns)
     status = await queryOne<{
       n8n_configured: boolean;
       wizard_completed: boolean;
       workflows_imported: string;
       workflows_total: string;
     }>("SELECT * FROM setup_status");
+
+    // If view exists but doesn't have pending/failed, query them separately
+    if (status && (status.workflows_pending === undefined || status.workflows_failed === undefined)) {
+      try {
+        const countResult = await queryOne<{ pending: string; failed: string }>(`
+          SELECT
+            COUNT(*) FILTER (WHERE import_status IN ('pending', 'importing', 'updating'))::text AS pending,
+            COUNT(*) FILTER (WHERE import_status = 'failed')::text AS failed
+          FROM workflow_registry
+        `);
+        if (countResult) {
+          status.workflows_pending = countResult.pending;
+          status.workflows_failed = countResult.failed;
+        }
+      } catch {
+        // workflow_registry may not exist
+        status.workflows_pending = "0";
+        status.workflows_failed = "0";
+      }
+    }
   } catch (error) {
     if (isPostgresUndefinedTableError(error)) {
       log.debug("setup_status view not found, using fallback");
@@ -682,6 +723,8 @@ export async function getSetupStatus(): Promise<{
     n8nConfigured: status?.n8n_configured ?? false,
     workflowsImported: parseInt(status?.workflows_imported ?? "0", 10),
     workflowsTotal: parseInt(status?.workflows_total ?? "0", 10),
+    workflowsPending: parseInt(status?.workflows_pending ?? "0", 10),
+    workflowsFailed: parseInt(status?.workflows_failed ?? "0", 10),
     lastHealthCheck: healthCheck ?? null,
   };
 }
@@ -780,4 +823,27 @@ export async function resetAllSettings(options: {
     wizardSettingsDeleted,
     n8nConfigCleared: !preserveN8nConfig,
   };
+}
+
+/**
+ * Clear all settings from the app_settings table.
+ *
+ * This is a destructive operation used for factory reset.
+ *
+ * @param options.preserveAuditLog - If true, don't touch decision_log_entries (default: true)
+ * @returns Count of deleted settings
+ */
+export async function clearAllSettings(options: {
+  preserveAuditLog?: boolean;
+} = {}): Promise<number> {
+  const { preserveAuditLog = true } = options;
+
+  log.warn("Clearing all settings", { preserveAuditLog });
+
+  // Delete all settings from app_settings
+  const affected = await execute("DELETE FROM app_settings");
+
+  log.info("All settings cleared", { deletedCount: affected, preserveAuditLog });
+
+  return affected;
 }
