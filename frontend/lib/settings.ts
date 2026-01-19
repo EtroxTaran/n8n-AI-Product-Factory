@@ -700,3 +700,84 @@ export async function updateHealthCheck(healthy: boolean): Promise<void> {
     description: "Last n8n health check result",
   });
 }
+
+// ============================================
+// Reset Operations
+// ============================================
+
+/**
+ * Keys that are deleted when resetting the setup wizard.
+ */
+const SETUP_WIZARD_SETTINGS = [
+  "setup.wizard_completed",
+  "setup.wizard_completed_at",
+  "setup.wizard_completed_by",
+  "setup.wizard_skipped",
+];
+
+/**
+ * Reset the setup wizard state.
+ *
+ * This deletes all setup wizard completion markers, allowing the user
+ * to go through the setup wizard again. Does NOT clear n8n configuration
+ * or workflow registry - use separate functions for those.
+ *
+ * @returns Number of settings deleted
+ */
+export async function resetSetupWizard(): Promise<number> {
+  log.info("Resetting setup wizard state");
+
+  let deletedCount = 0;
+
+  for (const key of SETUP_WIZARD_SETTINGS) {
+    const deleted = await deleteSetting(key);
+    if (deleted) {
+      deletedCount++;
+    }
+  }
+
+  log.info("Setup wizard state reset", { deletedCount });
+  return deletedCount;
+}
+
+/**
+ * Perform a full settings reset.
+ *
+ * Clears:
+ * - Setup wizard state
+ * - n8n configuration (optional)
+ * - Health check data
+ *
+ * Does NOT clear workflow registry (handled separately).
+ *
+ * @param options.preserveN8nConfig - If true, keep n8n URL/API key (default: false)
+ * @returns Summary of what was reset
+ */
+export async function resetAllSettings(options: {
+  preserveN8nConfig?: boolean;
+} = {}): Promise<{
+  wizardSettingsDeleted: number;
+  n8nConfigCleared: boolean;
+}> {
+  const { preserveN8nConfig = false } = options;
+
+  log.info("Resetting all settings", { preserveN8nConfig });
+
+  // Reset setup wizard state
+  const wizardSettingsDeleted = await resetSetupWizard();
+
+  // Optionally clear n8n config
+  if (!preserveN8nConfig) {
+    await clearN8nConfig();
+  }
+
+  log.info("All settings reset complete", {
+    wizardSettingsDeleted,
+    n8nConfigCleared: !preserveN8nConfig,
+  });
+
+  return {
+    wizardSettingsDeleted,
+    n8nConfigCleared: !preserveN8nConfig,
+  };
+}

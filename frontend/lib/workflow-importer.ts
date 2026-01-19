@@ -2079,3 +2079,702 @@ export async function syncWorkflowRegistry(
     throw error;
   }
 }
+
+// ============================================
+// Registry Helper Functions
+// ============================================
+
+/**
+ * Get all workflow registry entries that have been imported to n8n.
+ *
+ * @returns Array of registry entries with valid n8n workflow IDs
+ */
+export async function getImportedWorkflowIds(): Promise<
+  Array<{ filename: string; n8nWorkflowId: string; workflowName: string }>
+> {
+  const entries = await query<WorkflowRegistryEntry>(
+    `SELECT workflow_file, n8n_workflow_id, workflow_name
+     FROM workflow_registry
+     WHERE n8n_workflow_id IS NOT NULL`
+  );
+
+  return entries.map((e) => ({
+    filename: e.workflow_file,
+    n8nWorkflowId: e.n8n_workflow_id!,
+    workflowName: e.workflow_name,
+  }));
+}
+
+/**
+ * Truncate the workflow registry table.
+ *
+ * This removes all entries from the registry, effectively resetting
+ * the import state. Does NOT delete workflows from n8n.
+ *
+ * @returns Number of entries deleted
+ */
+export async function truncateWorkflowRegistry(): Promise<number> {
+  log.info("Truncating workflow registry");
+
+  const countResult = await queryOne<{ count: string }>(
+    "SELECT COUNT(*)::text as count FROM workflow_registry"
+  );
+  const count = parseInt(countResult?.count || "0", 10);
+
+  await execute("DELETE FROM workflow_registry");
+
+  log.info("Workflow registry truncated", { deletedCount: count });
+  return count;
+}
+
+/**
+ * Get a map of bundled workflow names to filenames.
+ *
+ * Used for matching orphaned workflows in n8n to bundled workflow files.
+ *
+ * @returns Map from workflow name to filename
+ */
+export async function getBundledWorkflowNameMap(
+  workflowsDir: string = DEFAULT_WORKFLOWS_DIR
+): Promise<Map<string, string>> {
+  const bundled = await getBundledWorkflows(workflowsDir);
+  const map = new Map<string, string>();
+
+  for (const workflow of bundled) {
+    map.set(workflow.name, workflow.filename);
+  }
+
+  return map;
+}
+
+// ============================================
+// Reset Operations
+// ============================================
+
+/**
+ * Error that occurred while deleting a workflow.
+ */
+export interface DeleteError {
+  workflowId: string;
+  workflowName: string;
+  filename: string;
+  error: string;
+}
+
+/**
+ * Result of the full reset operation.
+ */
+export interface ResetResult {
+  success: boolean;
+  mode: "soft" | "full";
+  deletedFromN8n: number;
+  deleteErrors: DeleteError[];
+  clearedFromRegistry: number;
+  settingsReset: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Delete all imported workflows from n8n.
+ *
+ * This function:
+ * 1. Gets all workflows from the registry that have n8n IDs
+ * 2. Deactivates each workflow (to prevent errors)
+ * 3. Deletes each workflow from n8n
+ *
+ * Continues on error for individual workflows to ensure as many
+ * as possible are deleted.
+ *
+ * @param configOverride - Optional n8n API config
+ * @returns Count of deleted workflows and any errors
+ */
+export async function deleteAllImportedWorkflows(
+  configOverride?: N8nApiConfig
+): Promise<{ deleted: number; errors: DeleteError[] }> {
+  log.info("Deleting all imported workflows from n8n");
+
+  const config = configOverride || (await getN8nConfig());
+  if (!config) {
+    throw new Error("n8n not configured");
+  }
+
+  const imported = await getImportedWorkflowIds();
+  let deleted = 0;
+  const errors: DeleteError[] = [];
+
+  log.info("Found imported workflows to delete", { count: imported.length });
+
+  for (const workflow of imported) {
+    try {
+      // First try to deactivate (ignore errors - might already be inactive)
+      try {
+        await deactivateWorkflow(workflow.n8nWorkflowId, config);
+      } catch {
+        // Ignore deactivation errors
+      }
+
+      // Delete the workflow
+      await deleteWorkflow(workflow.n8nWorkflowId, config);
+      deleted++;
+
+      log.info("Deleted workflow from n8n", {
+        filename: workflow.filename,
+        workflowId: workflow.n8nWorkflowId,
+      });
+
+      // Brief delay to avoid rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Check if workflow was already deleted (404)
+      if (errorMessage.includes("404") || errorMessage.includes("not found")) {
+        log.info("Workflow already deleted from n8n", {
+          filename: workflow.filename,
+          workflowId: workflow.n8nWorkflowId,
+        });
+        deleted++; // Count as deleted since it doesn't exist
+        continue;
+      }
+
+      log.error("Failed to delete workflow from n8n", {
+        filename: workflow.filename,
+        workflowId: workflow.n8nWorkflowId,
+        error: errorMessage,
+      });
+
+      errors.push({
+        workflowId: workflow.n8nWorkflowId,
+        workflowName: workflow.workflowName,
+        filename: workflow.filename,
+        error: errorMessage,
+      });
+    }
+  }
+
+  log.info("Finished deleting workflows from n8n", {
+    deleted,
+    errors: errors.length,
+    total: imported.length,
+  });
+
+  return { deleted, errors };
+}
+
+/**
+ * Clear the workflow registry table.
+ *
+ * This is a wrapper around truncateWorkflowRegistry for semantic clarity.
+ *
+ * @returns Number of entries cleared
+ */
+export async function clearWorkflowRegistry(): Promise<number> {
+  return truncateWorkflowRegistry();
+}
+
+/**
+ * Perform a full reset of the workflow setup.
+ *
+ * Modes:
+ * - soft: Clear registry and settings only (workflows remain in n8n)
+ * - full: Delete workflows from n8n, then clear registry and settings
+ *
+ * @param options.mode - Reset mode ("soft" or "full")
+ * @param options.preserveN8nConfig - Keep n8n URL/API key (default: false for full)
+ * @param options.onProgress - Optional progress callback
+ * @returns Reset result with counts and any errors
+ */
+export async function performFullReset(options: {
+  mode: "soft" | "full";
+  preserveN8nConfig?: boolean;
+  configOverride?: N8nApiConfig;
+  onProgress?: (step: string, current: number, total: number) => void;
+}): Promise<ResetResult> {
+  const {
+    mode,
+    preserveN8nConfig = mode === "soft",
+    onProgress,
+  } = options;
+
+  log.info("Performing workflow reset", { mode, preserveN8nConfig });
+
+  const result: ResetResult = {
+    success: false,
+    mode,
+    deletedFromN8n: 0,
+    deleteErrors: [],
+    clearedFromRegistry: 0,
+    settingsReset: false,
+    errors: [],
+    warnings: [],
+  };
+
+  try {
+    // For full reset, delete workflows from n8n first
+    if (mode === "full") {
+      onProgress?.("Deleting workflows from n8n", 0, 3);
+
+      try {
+        const config = options.configOverride || (await getN8nConfig());
+        if (config) {
+          const deleteResult = await deleteAllImportedWorkflows(config);
+          result.deletedFromN8n = deleteResult.deleted;
+          result.deleteErrors = deleteResult.errors;
+
+          if (deleteResult.errors.length > 0) {
+            result.warnings.push(
+              `${deleteResult.errors.length} workflow(s) could not be deleted from n8n`
+            );
+          }
+        } else {
+          result.warnings.push(
+            "n8n not configured - skipping workflow deletion from n8n instance"
+          );
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        result.warnings.push(`Failed to delete workflows from n8n: ${errorMessage}`);
+        log.warn("Failed to delete workflows from n8n during reset", { error: errorMessage });
+      }
+    }
+
+    // Clear workflow registry
+    onProgress?.("Clearing workflow registry", 1, 3);
+
+    try {
+      result.clearedFromRegistry = await clearWorkflowRegistry();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      result.errors.push(`Failed to clear workflow registry: ${errorMessage}`);
+      log.error("Failed to clear workflow registry during reset", { error: errorMessage });
+    }
+
+    // Reset settings (import dynamically to avoid circular dependency)
+    onProgress?.("Resetting settings", 2, 3);
+
+    try {
+      const { resetAllSettings } = await import("@/lib/settings");
+      await resetAllSettings({ preserveN8nConfig });
+      result.settingsReset = true;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      result.errors.push(`Failed to reset settings: ${errorMessage}`);
+      log.error("Failed to reset settings during reset", { error: errorMessage });
+    }
+
+    onProgress?.("Complete", 3, 3);
+
+    // Determine overall success
+    result.success = result.errors.length === 0;
+
+    log.info("Workflow reset complete", {
+      mode,
+      success: result.success,
+      deletedFromN8n: result.deletedFromN8n,
+      clearedFromRegistry: result.clearedFromRegistry,
+      settingsReset: result.settingsReset,
+      errors: result.errors.length,
+      warnings: result.warnings.length,
+    });
+
+    return result;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    result.errors.push(`Reset failed: ${errorMessage}`);
+    log.error("Workflow reset failed", { error: errorMessage });
+    return result;
+  }
+}
+
+// ============================================
+// Orphan Detection
+// ============================================
+
+/**
+ * A workflow that exists in n8n but is not tracked in the registry.
+ */
+export interface OrphanedWorkflow {
+  n8nWorkflowId: string;
+  name: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  matchesBundled: boolean;
+  matchedFilename?: string;
+  suggestedAction: "ignore" | "import" | "investigate";
+}
+
+/**
+ * Detect workflows in n8n that are not tracked in the registry.
+ *
+ * These "orphaned" workflows might be:
+ * - Manually created workflows (action: ignore)
+ * - Product Factory workflows created outside this dashboard (action: import)
+ * - Leftover workflows from previous installations (action: investigate)
+ *
+ * @param configOverride - Optional n8n API config
+ * @param workflowsDir - Directory containing bundled workflows
+ * @returns Array of orphaned workflows with suggested actions
+ */
+export async function detectOrphanedWorkflows(
+  configOverride?: N8nApiConfig,
+  workflowsDir: string = DEFAULT_WORKFLOWS_DIR
+): Promise<OrphanedWorkflow[]> {
+  log.info("Detecting orphaned workflows in n8n");
+
+  const config = configOverride || (await getN8nConfig());
+  if (!config) {
+    throw new Error("n8n not configured");
+  }
+
+  // Get all workflows from n8n
+  const n8nWorkflows = await listWorkflows(config);
+
+  // Get tracked workflow IDs from registry
+  const registry = await getWorkflowRegistry();
+  const trackedIds = new Set(
+    registry
+      .filter((e) => e.n8n_workflow_id)
+      .map((e) => e.n8n_workflow_id)
+  );
+
+  // Get bundled workflow names for matching
+  const bundledNameMap = await getBundledWorkflowNameMap(workflowsDir);
+
+  // Find orphaned workflows
+  const orphans: OrphanedWorkflow[] = [];
+
+  for (const workflow of n8nWorkflows) {
+    if (trackedIds.has(workflow.id)) {
+      continue; // Already tracked
+    }
+
+    // Check if name matches a bundled workflow
+    const matchedFilename = bundledNameMap.get(workflow.name);
+    const matchesBundled = !!matchedFilename;
+
+    // Determine suggested action
+    let suggestedAction: OrphanedWorkflow["suggestedAction"];
+    if (matchesBundled) {
+      // Name matches a Product Factory workflow - likely needs to be imported
+      suggestedAction = "import";
+    } else if (workflow.name.includes("AI Product Factory") || workflow.name.includes("ai-product-factory")) {
+      // Name contains Product Factory keywords but doesn't match exactly
+      suggestedAction = "investigate";
+    } else {
+      // Unrelated workflow - ignore
+      suggestedAction = "ignore";
+    }
+
+    orphans.push({
+      n8nWorkflowId: workflow.id,
+      name: workflow.name,
+      isActive: workflow.active,
+      createdAt: workflow.createdAt,
+      updatedAt: workflow.updatedAt,
+      matchesBundled,
+      matchedFilename,
+      suggestedAction,
+    });
+  }
+
+  log.info("Orphan detection complete", {
+    totalInN8n: n8nWorkflows.length,
+    tracked: trackedIds.size,
+    orphans: orphans.length,
+    toImport: orphans.filter((o) => o.suggestedAction === "import").length,
+    toInvestigate: orphans.filter((o) => o.suggestedAction === "investigate").length,
+    toIgnore: orphans.filter((o) => o.suggestedAction === "ignore").length,
+  });
+
+  return orphans;
+}
+
+// ============================================
+// Conflict Detection
+// ============================================
+
+/**
+ * A conflict between local workflow file and n8n state.
+ */
+export interface WorkflowConflict {
+  filename: string;
+  workflowName: string;
+  n8nWorkflowId: string;
+  conflictType: "content_mismatch" | "name_conflict" | "missing_in_n8n";
+  details: string;
+}
+
+/**
+ * Detect conflicts between local workflow files and n8n instance.
+ *
+ * Conflict types:
+ * - content_mismatch: Checksum differs between registry and local file
+ * - name_conflict: Same name exists in n8n but different workflow ID
+ * - missing_in_n8n: Tracked in registry but not found in n8n
+ *
+ * @param configOverride - Optional n8n API config
+ * @param workflowsDir - Directory containing bundled workflows
+ * @returns Array of detected conflicts
+ */
+export async function detectWorkflowConflicts(
+  configOverride?: N8nApiConfig,
+  workflowsDir: string = DEFAULT_WORKFLOWS_DIR
+): Promise<WorkflowConflict[]> {
+  log.info("Detecting workflow conflicts");
+
+  const config = configOverride || (await getN8nConfig());
+  if (!config) {
+    throw new Error("n8n not configured");
+  }
+
+  const conflicts: WorkflowConflict[] = [];
+
+  // Get bundled workflows
+  const bundled = await getBundledWorkflows(workflowsDir);
+
+  // Get registry
+  const registry = await getWorkflowRegistry();
+
+  // Get all workflows from n8n
+  const n8nWorkflows = await listWorkflows(config);
+  const n8nByName = new Map<string, N8nWorkflow>();
+  const n8nById = new Map<string, N8nWorkflow>();
+
+  for (const workflow of n8nWorkflows) {
+    n8nByName.set(workflow.name, workflow);
+    n8nById.set(workflow.id, workflow);
+  }
+
+  for (const workflow of bundled) {
+    const entry = registry.find((r) => r.workflow_file === workflow.filename);
+
+    if (!entry || !entry.n8n_workflow_id) {
+      // Not imported yet - not a conflict
+      continue;
+    }
+
+    // Check if workflow exists in n8n by ID
+    const n8nWorkflow = n8nById.get(entry.n8n_workflow_id);
+
+    if (!n8nWorkflow) {
+      // Tracked but not found in n8n
+      conflicts.push({
+        filename: workflow.filename,
+        workflowName: workflow.name,
+        n8nWorkflowId: entry.n8n_workflow_id,
+        conflictType: "missing_in_n8n",
+        details: `Workflow with ID ${entry.n8n_workflow_id} not found in n8n (may have been deleted)`,
+      });
+      continue;
+    }
+
+    // Check for name conflicts
+    const workflowByName = n8nByName.get(workflow.name);
+    if (workflowByName && workflowByName.id !== entry.n8n_workflow_id) {
+      conflicts.push({
+        filename: workflow.filename,
+        workflowName: workflow.name,
+        n8nWorkflowId: entry.n8n_workflow_id,
+        conflictType: "name_conflict",
+        details: `Workflow name "${workflow.name}" exists with different ID: ${workflowByName.id} vs tracked ${entry.n8n_workflow_id}`,
+      });
+    }
+
+    // Check for content mismatch (local file changed)
+    if (entry.local_checksum && entry.local_checksum !== workflow.localVersion) {
+      conflicts.push({
+        filename: workflow.filename,
+        workflowName: workflow.name,
+        n8nWorkflowId: entry.n8n_workflow_id,
+        conflictType: "content_mismatch",
+        details: `Local file changed (registry: ${entry.local_checksum.substring(0, 8)}, file: ${workflow.localVersion.substring(0, 8)})`,
+      });
+    }
+  }
+
+  log.info("Conflict detection complete", {
+    totalWorkflows: bundled.length,
+    conflicts: conflicts.length,
+    contentMismatches: conflicts.filter((c) => c.conflictType === "content_mismatch").length,
+    nameConflicts: conflicts.filter((c) => c.conflictType === "name_conflict").length,
+    missingInN8n: conflicts.filter((c) => c.conflictType === "missing_in_n8n").length,
+  });
+
+  return conflicts;
+}
+
+// ============================================
+// Enhanced Sync (with orphan detection)
+// ============================================
+
+/**
+ * Enhanced sync progress with orphan and conflict information.
+ */
+export interface EnhancedSyncProgress extends SyncProgress {
+  orphans: OrphanedWorkflow[];
+  conflicts: WorkflowConflict[];
+  pulled: number;
+  mode: "detect" | "pull" | "reconcile";
+}
+
+/**
+ * Enhanced workflow registry sync with orphan and conflict detection.
+ *
+ * Modes:
+ * - detect (default): Read-only, report orphans and conflicts
+ * - pull: Add orphaned workflows that match bundled names to registry
+ * - reconcile: Pull + update registry to match n8n state (mark deleted, etc.)
+ *
+ * @param options.mode - Sync mode
+ * @param options.includeOrphans - Whether to detect orphans (default: true)
+ * @param options.configOverride - Optional n8n API config
+ * @param options.workflowsDir - Directory containing bundled workflows
+ * @returns Enhanced sync progress with orphan and conflict info
+ */
+export async function enhancedSyncWorkflowRegistry(options: {
+  mode?: "detect" | "pull" | "reconcile";
+  includeOrphans?: boolean;
+  configOverride?: N8nApiConfig;
+  workflowsDir?: string;
+} = {}): Promise<EnhancedSyncProgress> {
+  const {
+    mode = "detect",
+    includeOrphans = true,
+    workflowsDir = DEFAULT_WORKFLOWS_DIR,
+  } = options;
+
+  log.info("Starting enhanced workflow registry sync", { mode, includeOrphans });
+
+  // First, run the basic sync
+  const basicSync = await syncWorkflowRegistry({
+    configOverride: options.configOverride,
+  });
+
+  const progress: EnhancedSyncProgress = {
+    ...basicSync,
+    orphans: [],
+    conflicts: [],
+    pulled: 0,
+    mode,
+  };
+
+  const config = options.configOverride || (await getN8nConfig());
+  if (!config) {
+    throw new Error("n8n not configured");
+  }
+
+  // Detect conflicts
+  try {
+    progress.conflicts = await detectWorkflowConflicts(config, workflowsDir);
+  } catch (error) {
+    log.error("Failed to detect conflicts during enhanced sync", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  // Detect orphans if requested
+  if (includeOrphans) {
+    try {
+      progress.orphans = await detectOrphanedWorkflows(config, workflowsDir);
+    } catch (error) {
+      log.error("Failed to detect orphans during enhanced sync", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // In pull or reconcile mode, add matching orphans to registry
+  if ((mode === "pull" || mode === "reconcile") && progress.orphans.length > 0) {
+    const orphansToImport = progress.orphans.filter(
+      (o) => o.suggestedAction === "import" && o.matchedFilename
+    );
+
+    log.info("Pulling orphaned workflows into registry", {
+      count: orphansToImport.length,
+    });
+
+    for (const orphan of orphansToImport) {
+      try {
+        // Read the local workflow file to get checksum
+        const fileData = await readWorkflowFile(orphan.matchedFilename!, workflowsDir);
+
+        // Add to registry
+        await upsertWorkflowEntry({
+          workflow_file: orphan.matchedFilename!,
+          workflow_name: orphan.name,
+          n8n_workflow_id: orphan.n8nWorkflowId,
+          local_version: fileData.checksum.substring(0, 8),
+          local_checksum: fileData.checksum,
+          webhook_paths: extractWebhookPaths(fileData.workflow),
+          is_active: orphan.isActive,
+          import_status: "imported",
+          last_import_at: new Date(),
+          last_error: null,
+        });
+
+        progress.pulled++;
+
+        log.info("Pulled orphaned workflow into registry", {
+          filename: orphan.matchedFilename,
+          workflowId: orphan.n8nWorkflowId,
+        });
+      } catch (error) {
+        log.error("Failed to pull orphaned workflow into registry", {
+          filename: orphan.matchedFilename,
+          workflowId: orphan.n8nWorkflowId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        progress.errors++;
+      }
+    }
+  }
+
+  // In reconcile mode, also handle deleted/missing workflows
+  if (mode === "reconcile") {
+    const missingConflicts = progress.conflicts.filter(
+      (c) => c.conflictType === "missing_in_n8n"
+    );
+
+    for (const conflict of missingConflicts) {
+      try {
+        // Mark as deleted in registry
+        await upsertWorkflowEntry({
+          workflow_file: conflict.filename,
+          n8n_workflow_id: null,
+          is_active: false,
+          import_status: "pending",
+          last_error: "Workflow was deleted from n8n instance (reconciled)",
+        });
+
+        progress.deleted++;
+
+        log.info("Reconciled missing workflow", {
+          filename: conflict.filename,
+          previousId: conflict.n8nWorkflowId,
+        });
+      } catch (error) {
+        log.error("Failed to reconcile missing workflow", {
+          filename: conflict.filename,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        progress.errors++;
+      }
+    }
+  }
+
+  log.info("Enhanced workflow registry sync complete", {
+    mode,
+    total: progress.total,
+    synced: progress.synced,
+    deleted: progress.deleted,
+    stateChanged: progress.stateChanged,
+    orphans: progress.orphans.length,
+    conflicts: progress.conflicts.length,
+    pulled: progress.pulled,
+    errors: progress.errors,
+  });
+
+  return progress;
+}

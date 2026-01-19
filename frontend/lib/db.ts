@@ -63,6 +63,77 @@ export async function healthCheck(): Promise<boolean> {
   }
 }
 
+/**
+ * Execute a callback within a database transaction.
+ *
+ * The callback receives a client that is already in a transaction.
+ * If the callback completes successfully, the transaction is committed.
+ * If the callback throws an error, the transaction is rolled back.
+ *
+ * @param callback - Function to execute within the transaction
+ * @returns The result of the callback
+ * @throws Re-throws any error from the callback after rolling back
+ *
+ * @example
+ * ```typescript
+ * const result = await withTransaction(async (client) => {
+ *   await client.query('INSERT INTO table1 ...');
+ *   await client.query('INSERT INTO table2 ...');
+ *   return { success: true };
+ * });
+ * ```
+ */
+export async function withTransaction<T>(
+  callback: (client: pg.PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await callback(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Execute a query using a specific client (for use within transactions).
+ *
+ * @param client - The database client to use
+ * @param sql - The SQL query to execute
+ * @param params - Optional query parameters
+ * @returns Array of rows
+ */
+export async function queryWithClient<T>(
+  client: pg.PoolClient,
+  sql: string,
+  params?: unknown[]
+): Promise<T[]> {
+  const result = await client.query(sql, params);
+  return result.rows as T[];
+}
+
+/**
+ * Execute a statement using a specific client (for use within transactions).
+ *
+ * @param client - The database client to use
+ * @param sql - The SQL statement to execute
+ * @param params - Optional query parameters
+ * @returns Number of affected rows
+ */
+export async function executeWithClient(
+  client: pg.PoolClient,
+  sql: string,
+  params?: unknown[]
+): Promise<number> {
+  const result = await client.query(sql, params);
+  return result.rowCount || 0;
+}
+
 // Project-specific queries
 export async function getProjects() {
   return query(`
