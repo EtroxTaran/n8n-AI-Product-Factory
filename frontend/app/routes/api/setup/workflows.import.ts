@@ -1,6 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getServerSession } from "@/lib/auth";
-import { importWorkflow, importAllWorkflows } from "@/lib/workflow-importer";
+import {
+  importWorkflow,
+  importAllWorkflows,
+  dryRunImport,
+} from "@/lib/workflow-importer";
 import { getN8nConfig } from "@/lib/settings";
 import {
   createRequestContext,
@@ -13,6 +17,7 @@ import {
 interface ImportWorkflowsRequest {
   filename?: string; // Specific file, or omit for all
   forceUpdate?: boolean;
+  dryRun?: boolean; // Preview import without making changes
 }
 
 /**
@@ -57,6 +62,42 @@ export const Route = createFileRoute("/api/setup/workflows/import")({
           // Parse request body
           const body = (await request.json()) as ImportWorkflowsRequest;
           const forceUpdate = body.forceUpdate || false;
+          const dryRun = body.dryRun || false;
+
+          // Handle dry-run mode - preview without making changes
+          if (dryRun) {
+            log.info("Running dry-run import preview", { forceUpdate });
+
+            const dryRunResult = await dryRunImport(
+              undefined, // Use default workflows dir
+              config, // configOverride
+              forceUpdate
+            );
+
+            const response = Response.json({
+              success: true,
+              dryRun: true,
+              preview: dryRunResult,
+              summary: {
+                total: dryRunResult.workflows.length,
+                wouldImport: dryRunResult.workflows.filter(
+                  (w) => w.action === "create"
+                ).length,
+                wouldUpdate: dryRunResult.workflows.filter(
+                  (w) => w.action === "update"
+                ).length,
+                wouldSkip: dryRunResult.workflows.filter(
+                  (w) => w.action === "skip"
+                ).length,
+                validationErrors: dryRunResult.validation.errors.length,
+                validationWarnings: dryRunResult.validation.warnings.length,
+              },
+              webhookBaseUrl: config.webhookBaseUrl,
+            });
+
+            logRequestComplete(ctx, 200, Date.now() - startTime);
+            return withCorrelationId(response, ctx.correlationId);
+          }
 
           if (body.filename) {
             // Import single workflow

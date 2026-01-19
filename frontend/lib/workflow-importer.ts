@@ -61,7 +61,8 @@ export interface WorkflowRegistryEntry {
     | "imported"
     | "failed"
     | "update_available"
-    | "updating";
+    | "updating"
+    | "pending_activation"; // Phase 1 complete, waiting for Phase 2
   last_import_at: Date | null;
   last_error: string | null;
   retry_count: number;
@@ -71,6 +72,7 @@ export interface WorkflowRegistryEntry {
 
 export interface ImportResult {
   filename: string;
+  name?: string; // Workflow name for display
   status: "imported" | "updated" | "skipped" | "failed" | "created" | "activation_failed";
   n8nWorkflowId?: string;
   webhookPaths?: string[];
@@ -543,6 +545,146 @@ export async function validatePreImport(
 }
 
 // ============================================
+// Dry-Run Import Preview
+// ============================================
+
+/**
+ * Result of a dry-run import preview for a single workflow.
+ */
+export interface DryRunWorkflowResult {
+  filename: string;
+  name: string;
+  action: "create" | "update" | "skip";
+  reason: string;
+  currentVersion?: string;
+  newVersion: string;
+  nodeCount: number;
+  hasCredentials: boolean;
+  webhookPaths: string[];
+  dependencies: string[];
+}
+
+/**
+ * Full dry-run import preview result.
+ */
+export interface DryRunResult {
+  valid: boolean;
+  validation: PreImportValidationResult;
+  workflows: DryRunWorkflowResult[];
+  summary: {
+    total: number;
+    toCreate: number;
+    toUpdate: number;
+    toSkip: number;
+  };
+  importOrder: string[];
+}
+
+/**
+ * Perform a dry-run import preview.
+ *
+ * This simulates an import without making any changes, showing:
+ * - Which workflows would be created, updated, or skipped
+ * - Validation results (node compatibility, circular deps)
+ * - Import order based on dependencies
+ *
+ * @param workflowsDir - Directory containing workflow files
+ * @param configOverride - Optional n8n API config
+ * @param forceUpdate - If true, all workflows would be updated
+ * @returns Dry-run preview result
+ */
+export async function dryRunImport(
+  workflowsDir: string = DEFAULT_WORKFLOWS_DIR,
+  configOverride?: N8nApiConfig,
+  forceUpdate: boolean = false
+): Promise<DryRunResult> {
+  log.info("Running dry-run import preview", { forceUpdate });
+
+  // Run validation first
+  const validation = await validatePreImport(workflowsDir, configOverride);
+
+  // Get bundled workflows
+  const bundled = await getBundledWorkflows(workflowsDir);
+
+  // Get current registry state
+  const registry = await getWorkflowRegistry();
+
+  // Build preview for each workflow
+  const workflows: DryRunWorkflowResult[] = [];
+  let toCreate = 0;
+  let toUpdate = 0;
+  let toSkip = 0;
+
+  for (const workflow of bundled) {
+    const entry = registry.find((r) => r.workflow_file === workflow.filename);
+
+    let action: "create" | "update" | "skip";
+    let reason: string;
+
+    if (!entry || !entry.n8n_workflow_id) {
+      // Not imported yet
+      action = "create";
+      reason = "Workflow not yet imported";
+      toCreate++;
+    } else if (forceUpdate) {
+      // Force update requested
+      action = "update";
+      reason = "Force update requested";
+      toUpdate++;
+    } else if (entry.local_checksum !== workflow.localVersion) {
+      // Content changed
+      action = "update";
+      reason = "Workflow content changed (checksum mismatch)";
+      toUpdate++;
+    } else if (entry.import_status !== "imported") {
+      // Previous import failed or incomplete
+      action = "update";
+      reason = `Previous import status: ${entry.import_status}`;
+      toUpdate++;
+    } else {
+      // Already imported and up to date
+      action = "skip";
+      reason = "Already imported with matching version";
+      toSkip++;
+    }
+
+    workflows.push({
+      filename: workflow.filename,
+      name: workflow.name,
+      action,
+      reason,
+      currentVersion: entry?.local_checksum?.substring(0, 8),
+      newVersion: workflow.localVersion.substring(0, 8),
+      nodeCount: workflow.nodeCount,
+      hasCredentials: workflow.hasCredentials,
+      webhookPaths: workflow.webhookPaths,
+      dependencies: workflow.dependencies,
+    });
+  }
+
+  log.info("Dry-run preview complete", {
+    total: workflows.length,
+    toCreate,
+    toUpdate,
+    toSkip,
+    validationPassed: validation.valid,
+  });
+
+  return {
+    valid: validation.valid,
+    validation,
+    workflows,
+    summary: {
+      total: workflows.length,
+      toCreate,
+      toUpdate,
+      toSkip,
+    },
+    importOrder: validation.dependencyValidation.dependencyOrder,
+  };
+}
+
+// ============================================
 // Workflow Directory Validation
 // ============================================
 
@@ -816,9 +958,14 @@ export async function importWorkflow(
     forceUpdate?: boolean;
     workflowsDir?: string;
     configOverride?: N8nApiConfig;
+    skipActivation?: boolean; // For two-phase import: create only, activate later
   } = {}
 ): Promise<ImportResult> {
-  const { forceUpdate = false, workflowsDir = DEFAULT_WORKFLOWS_DIR } = options;
+  const {
+    forceUpdate = false,
+    workflowsDir = DEFAULT_WORKFLOWS_DIR,
+    skipActivation = false,
+  } = options;
 
   log.info("Importing workflow", { filename, forceUpdate });
 
@@ -852,6 +999,7 @@ export async function importWorkflow(
       log.info("Workflow already imported, skipping", { filename });
       return {
         filename,
+        name: workflow.name,
         status: "skipped",
         n8nWorkflowId: entry.n8n_workflow_id ?? undefined,
         webhookPaths: entry.webhook_paths,
@@ -890,11 +1038,15 @@ export async function importWorkflow(
       });
     }
 
-    // Activate the workflow
-    const activatedWorkflow = await activateWorkflow(n8nWorkflow.id, config);
-
     // Extract webhook paths
     const webhookPaths = extractWebhookPaths(workflow);
+
+    // Activate the workflow (unless skipActivation is set for two-phase import)
+    let isActive = false;
+    if (!skipActivation) {
+      const activatedWorkflow = await activateWorkflow(n8nWorkflow.id, config);
+      isActive = activatedWorkflow.active;
+    }
 
     // Update registry with success
     await upsertWorkflowEntry({
@@ -904,14 +1056,15 @@ export async function importWorkflow(
       local_version: checksum.substring(0, 8),
       local_checksum: checksum,
       webhook_paths: webhookPaths,
-      is_active: activatedWorkflow.active,
-      import_status: "imported",
+      is_active: isActive,
+      import_status: skipActivation ? "pending_activation" : "imported",
       last_import_at: new Date(),
       last_error: null,
     });
 
     return {
       filename,
+      name: workflow.name,
       status: existingWorkflow ? "updated" : "imported",
       n8nWorkflowId: n8nWorkflow.id,
       webhookPaths,
@@ -961,6 +1114,7 @@ export async function importWorkflow(
 
     return {
       filename,
+      name: workflowName,
       status: "failed",
       error: errorMessage,
     };
