@@ -66,7 +66,8 @@ describe('SetupStepConnect', () => {
     render(<SetupStepConnect {...defaultProps} />);
 
     expect(screen.getByLabelText(/n8n Instance URL/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/API Key/i)).toBeInTheDocument();
+    // Use getByPlaceholderText to target the API key input specifically
+    expect(screen.getByPlaceholderText(/n8n_api_/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Webhook Base URL/i)).toBeInTheDocument();
   });
 
