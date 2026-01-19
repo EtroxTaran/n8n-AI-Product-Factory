@@ -20,7 +20,7 @@
 
 The **AI Product Factory** is an n8n-based AI orchestration system that generates comprehensive **Product Vision** and **Architecture** documents through multi-phase, collaborative AI agent workflows.
 
-**Version**: v3.0.10 (2026-01-19)
+**Version**: v3.0.11 (2026-01-19)
 
 ### Key Capabilities
 
@@ -711,6 +711,7 @@ export MAX_MCP_OUTPUT_TOKENS=50000
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3.0.11 | 2026-01-19 | Usability optimization: shared EmptyState component, status utilities, accessibility (aria-labels, aria-hidden), GovernanceWidget performance fix, error handling improvements |
 | v3.0.10 | 2026-01-19 | Phase B UI: Dry-run preview, dependency visualization, validation display |
 | v3.0.9 | 2026-01-19 | Dependency graph API, dry-run import mode, SSE streaming for real-time progress |
 | v3.0.8 | 2026-01-19 | Pre-import validation (node compatibility, circular dependency detection), Phase 2 cleanup |
