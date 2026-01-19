@@ -182,13 +182,39 @@ function NewProjectPage() {
                 Upload architecture docs, requirements, technical standards, or any
                 documents that should inform the vision and architecture.
               </p>
-              <FileUpload
-                projectId={projectId || "temp"}
-                onUploadComplete={handleUploadComplete}
-                onUploadError={handleUploadError}
-                disabled={isSubmitting || !projectName.trim()}
-                maxFiles={10}
-              />
+              {!projectName.trim() ? (
+                <div className="border-2 border-dashed rounded-lg p-8 text-center">
+                  <div className="text-muted-foreground">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="mx-auto h-10 w-10 mb-4 opacity-50"
+                      aria-hidden="true"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    <p className="font-medium">Enter a project name first</p>
+                    <p className="text-xs mt-1">
+                      A project name is required before you can upload documents
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <FileUpload
+                  projectId={projectId || "temp"}
+                  onUploadComplete={handleUploadComplete}
+                  onUploadError={handleUploadError}
+                  disabled={isSubmitting}
+                  maxFiles={10}
+                />
+              )}
             </div>
 
             {/* Error Message */}

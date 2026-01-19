@@ -111,19 +111,38 @@ export function FileUpload({
 
         // Get presigned URL from API
         const contentType = getContentType(file.name);
-        const presignedResponse = await fetch("/api/presigned-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            projectId,
-            filename: file.name,
-            contentType,
-          }),
-        });
+        let presignedResponse: Response;
+
+        try {
+          presignedResponse = await fetch("/api/presigned-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projectId,
+              filename: file.name,
+              contentType,
+            }),
+          });
+        } catch (networkError) {
+          throw new Error("Network error: Unable to connect to server. Please check your connection and try again.");
+        }
 
         if (!presignedResponse.ok) {
-          const error = await presignedResponse.json();
-          throw new Error(error.message || "Failed to get upload URL");
+          let errorMessage = "Failed to get upload URL";
+          try {
+            const errorData = await presignedResponse.json();
+            errorMessage = errorData.message || errorData.error || errorMessage;
+          } catch {
+            // Response might not be JSON
+            if (presignedResponse.status === 401) {
+              errorMessage = "Authentication required. Please log in again.";
+            } else if (presignedResponse.status === 403) {
+              errorMessage = "Permission denied. You may not have access to upload files.";
+            } else if (presignedResponse.status >= 500) {
+              errorMessage = "Server error. Please try again later.";
+            }
+          }
+          throw new Error(errorMessage);
         }
 
         const { uploadUrl, key } = await presignedResponse.json();

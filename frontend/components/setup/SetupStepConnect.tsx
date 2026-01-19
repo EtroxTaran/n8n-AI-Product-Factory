@@ -75,8 +75,9 @@ export function SetupStepConnect({
           value={apiUrl}
           onChange={(e) => onApiUrlChange(e.target.value)}
           className="font-mono"
+          aria-describedby="apiUrl-help"
         />
-        <p className="text-xs text-muted-foreground">
+        <p id="apiUrl-help" className="text-xs text-muted-foreground">
           The URL where your n8n instance is accessible
         </p>
       </div>
@@ -107,6 +108,7 @@ export function SetupStepConnect({
             value={apiKey}
             onChange={(e) => onApiKeyChange(e.target.value)}
             className="font-mono pr-10"
+            aria-describedby="apiKey-help"
           />
           <Button
             type="button"
@@ -114,15 +116,16 @@ export function SetupStepConnect({
             size="sm"
             className="absolute right-0 top-0 h-full px-3"
             onClick={() => setShowApiKey(!showApiKey)}
+            aria-label={showApiKey ? "Hide API key" : "Show API key"}
           >
             {showApiKey ? (
-              <EyeOff className="w-4 h-4" />
+              <EyeOff className="w-4 h-4" aria-hidden="true" />
             ) : (
-              <Eye className="w-4 h-4" />
+              <Eye className="w-4 h-4" aria-hidden="true" />
             )}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground">
+        <p id="apiKey-help" className="text-xs text-muted-foreground">
           Your n8n API key will be encrypted before storage
         </p>
       </div>
@@ -152,14 +155,15 @@ export function SetupStepConnect({
           value={webhookBaseUrl}
           onChange={(e) => onWebhookBaseUrlChange(e.target.value)}
           className="font-mono"
+          aria-describedby="webhookBaseUrl-help"
         />
-        <p className="text-xs text-muted-foreground">
+        <p id="webhookBaseUrl-help" className="text-xs text-muted-foreground">
           Leave empty to use the same URL as your n8n instance
         </p>
       </div>
 
       {/* Test Connection Button */}
-      <div className="flex justify-center pt-4">
+      <div className="flex flex-col items-center gap-2 pt-4">
         <Button
           onClick={onTestConnection}
           disabled={!isValid || connectionStatus === "testing"}
@@ -168,18 +172,28 @@ export function SetupStepConnect({
         >
           {connectionStatus === "testing" ? (
             <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
               Testing Connection...
             </>
           ) : connectionStatus === "success" ? (
             <>
-              <CheckCircle className="w-4 h-4 mr-2" />
+              <CheckCircle className="w-4 h-4 mr-2" aria-hidden="true" />
               Connection Verified
             </>
           ) : (
             <>Test Connection</>
           )}
         </Button>
+        {connectionStatus !== "success" && isValid && (
+          <p className="text-xs text-muted-foreground text-center">
+            Test your connection to enable the Continue button
+          </p>
+        )}
+        {!isValid && (
+          <p className="text-xs text-muted-foreground text-center">
+            Enter your n8n URL and API key above
+          </p>
+        )}
       </div>
 
       {/* Connection Status */}

@@ -28,30 +28,30 @@ interface SetupStepVerifyProps {
 const getStatusIcon = (status: VerificationResult["status"]) => {
   switch (status) {
     case "success":
-      return <CheckCircle className="w-5 h-5 text-green-600" />;
+      return <CheckCircle className="w-5 h-5 text-green-600" aria-hidden="true" />;
     case "warning":
-      return <CheckCircle className="w-5 h-5 text-amber-600" />;
+      return <CheckCircle className="w-5 h-5 text-amber-600" aria-hidden="true" />;
     case "error":
-      return <XCircle className="w-5 h-5 text-red-600" />;
+      return <XCircle className="w-5 h-5 text-red-600" aria-hidden="true" />;
     case "checking":
-      return <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />;
+      return <Loader2 className="w-5 h-5 text-blue-600 animate-spin" aria-hidden="true" />;
     default:
-      return <div className="w-5 h-5 rounded-full border-2 border-muted-foreground" />;
+      return <div className="w-5 h-5 rounded-full border-2 border-muted-foreground" aria-hidden="true" />;
   }
 };
 
 const getCheckIcon = (id: string) => {
   switch (id) {
     case "n8n-health":
-      return <Server className="w-5 h-5 text-muted-foreground" />;
+      return <Server className="w-5 h-5 text-muted-foreground" aria-hidden="true" />;
     case "api-access":
-      return <Database className="w-5 h-5 text-muted-foreground" />;
+      return <Database className="w-5 h-5 text-muted-foreground" aria-hidden="true" />;
     case "workflows":
-      return <Workflow className="w-5 h-5 text-muted-foreground" />;
+      return <Workflow className="w-5 h-5 text-muted-foreground" aria-hidden="true" />;
     case "webhooks":
-      return <Webhook className="w-5 h-5 text-muted-foreground" />;
+      return <Webhook className="w-5 h-5 text-muted-foreground" aria-hidden="true" />;
     default:
-      return <CheckCircle className="w-5 h-5 text-muted-foreground" />;
+      return <CheckCircle className="w-5 h-5 text-muted-foreground" aria-hidden="true" />;
   }
 };
 
@@ -132,17 +132,17 @@ export function SetupStepVerify({
         >
           {isVerifying ? (
             <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
               Verifying...
             </>
           ) : allChecked ? (
             <>
-              <RefreshCw className="w-4 h-4 mr-2" />
+              <RefreshCw className="w-4 h-4 mr-2" aria-hidden="true" />
               Run Verification Again
             </>
           ) : (
             <>
-              <CheckCircle className="w-4 h-4 mr-2" />
+              <CheckCircle className="w-4 h-4 mr-2" aria-hidden="true" />
               Run Verification
             </>
           )}
@@ -159,10 +159,12 @@ export function SetupStepVerify({
               ? "bg-red-50 border-red-200 dark:bg-red-950/50 dark:border-red-900"
               : "bg-amber-50 border-amber-200 dark:bg-amber-950/50 dark:border-amber-900"
           }`}
+          role="status"
+          aria-live="polite"
         >
           {allPassed ? (
             <>
-              <CheckCircle className="w-8 h-8 text-green-600 mx-auto mb-2" />
+              <CheckCircle className="w-8 h-8 text-green-600 mx-auto mb-2" aria-hidden="true" />
               <p className="font-medium text-green-900 dark:text-green-100">
                 All Checks Passed!
               </p>
@@ -172,7 +174,7 @@ export function SetupStepVerify({
             </>
           ) : hasErrors ? (
             <>
-              <XCircle className="w-8 h-8 text-red-600 mx-auto mb-2" />
+              <XCircle className="w-8 h-8 text-red-600 mx-auto mb-2" aria-hidden="true" />
               <p className="font-medium text-red-900 dark:text-red-100">
                 Some Checks Failed
               </p>
@@ -182,7 +184,7 @@ export function SetupStepVerify({
             </>
           ) : (
             <>
-              <CheckCircle className="w-8 h-8 text-amber-600 mx-auto mb-2" />
+              <CheckCircle className="w-8 h-8 text-amber-600 mx-auto mb-2" aria-hidden="true" />
               <p className="font-medium text-amber-900 dark:text-amber-100">
                 Passed with Warnings
               </p>

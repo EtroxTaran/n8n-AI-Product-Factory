@@ -54,6 +54,7 @@ interface GovernanceWidgetProps {
   onSubmit: (response: GovernanceResponse) => Promise<void>;
   onCancel?: () => void;
   disabled?: boolean;
+  isLoading?: boolean;
 }
 
 // ============================================
@@ -127,21 +128,20 @@ function TechRow({ tech, decision, onDecisionChange, expanded, onExpandToggle }:
             <span className="font-medium truncate">{tech.name}</span>
             <CategoryBadge category={tech.category} />
             {hasAlternatives && (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger>
-                    <Sparkles className="h-3.5 w-3.5 text-purple-500" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {tech.alternatives!.length} alternatives available
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger>
+                  <Sparkles className="h-3.5 w-3.5 text-purple-500" aria-hidden="true" />
+                  <span className="sr-only">{tech.alternatives!.length} alternatives available</span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {tech.alternatives!.length} alternatives available
+                </TooltipContent>
+              </Tooltip>
             )}
           </div>
           <div className="flex items-center gap-4 mt-1">
             <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <FileText className="h-3 w-3" />
+              <FileText className="h-3 w-3" aria-hidden="true" />
               {tech.source}
             </span>
             <ConfidenceBar confidence={tech.confidence} />
@@ -150,65 +150,68 @@ function TechRow({ tech, decision, onDecisionChange, expanded, onExpandToggle }:
 
         {/* Quick Actions */}
         <div className="flex items-center gap-1">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="icon"
-                  variant={decision.action === "approve" && decision.scope === "global" ? "default" : "ghost"}
-                  className="h-8 w-8"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDecisionChange({ action: "approve", scope: "global" });
-                  }}
-                >
-                  <Globe className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Approve (Global)</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon"
+                variant={decision.action === "approve" && decision.scope === "global" ? "default" : "ghost"}
+                className="h-8 w-8"
+                aria-label="Approve (Global)"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDecisionChange({ action: "approve", scope: "global" });
+                }}
+              >
+                <Globe className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Approve (Global)</TooltipContent>
+          </Tooltip>
 
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="icon"
-                  variant={decision.action === "approve" && decision.scope === "local" ? "default" : "ghost"}
-                  className="h-8 w-8"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDecisionChange({ action: "approve", scope: "local" });
-                  }}
-                >
-                  <CheckCircle2 className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Approve (Local)</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon"
+                variant={decision.action === "approve" && decision.scope === "local" ? "default" : "ghost"}
+                className="h-8 w-8"
+                aria-label="Approve (Local)"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDecisionChange({ action: "approve", scope: "local" });
+                }}
+              >
+                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Approve (Local)</TooltipContent>
+          </Tooltip>
 
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="icon"
-                  variant={decision.action === "skip" ? "secondary" : "ghost"}
-                  className="h-8 w-8"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDecisionChange({ action: "skip" });
-                  }}
-                >
-                  <SkipForward className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Skip</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon"
+                variant={decision.action === "skip" ? "secondary" : "ghost"}
+                className="h-8 w-8"
+                aria-label="Skip"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDecisionChange({ action: "skip" });
+                }}
+              >
+                <SkipForward className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Skip</TooltipContent>
+          </Tooltip>
 
-          <Button size="icon" variant="ghost" className="h-8 w-8">
-            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8"
+            aria-label={expanded ? "Collapse details" : "Expand details"}
+            aria-expanded={expanded}
+          >
+            {expanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
           </Button>
         </div>
       </div>
@@ -318,6 +321,7 @@ export function GovernanceWidget({
   onSubmit,
   onCancel,
   disabled = false,
+  isLoading = false,
 }: GovernanceWidgetProps) {
   const [decisions, setDecisions] = React.useState<Record<string, TechDecisionState>>(() => {
     // Initialize all techs with "skip" action
@@ -396,7 +400,40 @@ export function GovernanceWidget({
     }
   }, [payload, decisions, onSubmit]);
 
+  // Loading state with skeleton
+  if (isLoading) {
+    return (
+      <Card className="w-full max-w-4xl">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="space-y-2">
+              <div className="h-6 w-48 bg-muted rounded animate-pulse" />
+              <div className="h-4 w-72 bg-muted rounded animate-pulse" />
+            </div>
+            <div className="flex gap-2">
+              <div className="h-5 w-20 bg-muted rounded animate-pulse" />
+              <div className="h-5 w-20 bg-muted rounded animate-pulse" />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-2 pb-2 border-b">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="h-8 w-32 bg-muted rounded animate-pulse" />
+            ))}
+          </div>
+          <div className="space-y-2">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="h-16 w-full bg-muted rounded animate-pulse" />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
+    <TooltipProvider>
     <Card className="w-full max-w-4xl">
       <CardHeader>
         <div className="flex items-center justify-between">
@@ -501,6 +538,7 @@ export function GovernanceWidget({
         </div>
       </CardFooter>
     </Card>
+    </TooltipProvider>
   );
 }
 

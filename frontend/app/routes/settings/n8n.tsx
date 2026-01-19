@@ -119,6 +119,8 @@ function N8nSettingsPage() {
   // Save settings
   const saveSettings = async () => {
     setIsSaving(true);
+    let saveSucceeded = false;
+
     try {
       const response = await fetch("/api/setup/n8n/save-config", {
         method: "POST",
@@ -133,22 +135,32 @@ function N8nSettingsPage() {
 
       if (data.success) {
         toast.success("Settings saved");
-        setApiKey(""); // Clear the API key field
+        saveSucceeded = true;
+
         // Reload status
-        const statusResponse = await fetch("/api/setup/status");
-        const statusData = await statusResponse.json();
-        setStatus({
-          configured: statusData.n8nConfigured,
-          apiUrl: statusData.apiUrl,
-          webhookBaseUrl: statusData.webhookBaseUrl,
-          lastHealthCheck: statusData.lastHealthCheck,
-        });
+        try {
+          const statusResponse = await fetch("/api/setup/status");
+          const statusData = await statusResponse.json();
+          setStatus({
+            configured: statusData.n8nConfigured,
+            apiUrl: statusData.apiUrl,
+            webhookBaseUrl: statusData.webhookBaseUrl,
+            lastHealthCheck: statusData.lastHealthCheck,
+          });
+        } catch {
+          // Status refresh failed but save succeeded - don't clear key
+          toast.warning("Settings saved, but failed to refresh status");
+        }
       } else {
         toast.error(data.error || "Failed to save settings");
       }
     } catch {
       toast.error("Failed to save settings");
     } finally {
+      // Only clear API key field on full success
+      if (saveSucceeded) {
+        setApiKey("");
+      }
       setIsSaving(false);
     }
   };
@@ -316,11 +328,12 @@ function N8nSettingsPage() {
                 size="sm"
                 className="absolute right-0 top-0 h-full px-3"
                 onClick={() => setShowApiKey(!showApiKey)}
+                aria-label={showApiKey ? "Hide API key" : "Show API key"}
               >
                 {showApiKey ? (
-                  <EyeOff className="w-4 h-4" />
+                  <EyeOff className="w-4 h-4" aria-hidden="true" />
                 ) : (
-                  <Eye className="w-4 h-4" />
+                  <Eye className="w-4 h-4" aria-hidden="true" />
                 )}
               </Button>
             </div>

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { GovernanceWidget } from "@/components/governance/GovernanceWidget";
+import { EmptyStateChat } from "@/components/ui/empty-state";
 import type { GovernanceResponse, ExtendedChatMessage } from "@/lib/schemas";
 import { GovernancePayloadSchema } from "@/lib/schemas";
 import { cn, formatDateTime } from "@/lib/utils";
@@ -78,25 +79,7 @@ export function ChatWindow({
       <ScrollArea className="flex-1" ref={scrollRef}>
         <div className="p-4 space-y-4">
           {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-12 w-12 text-muted-foreground mb-4"
-              >
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-              <h3 className="text-lg font-semibold">Start a conversation</h3>
-              <p className="text-sm text-muted-foreground mt-1 max-w-sm">
-                Send a message to interact with the{" "}
-                {projectName ? `"${projectName}"` : "project"} workflow
-              </p>
-            </div>
+            <EmptyStateChat projectName={projectName} />
           ) : (
             messages.map((message) => (
               <ChatBubble
@@ -107,9 +90,10 @@ export function ChatWindow({
             ))
           )}
           {isSending && (
-            <div className="flex justify-start">
+            <div className="flex justify-start" role="status" aria-live="polite">
               <div className="bg-muted rounded-lg px-4 py-3">
-                <div className="flex items-center space-x-2">
+                <span className="sr-only">AI is thinking...</span>
+                <div className="flex items-center space-x-2" aria-hidden="true">
                   <div className="w-2 h-2 bg-primary rounded-full animate-bounce" />
                   <div
                     className="w-2 h-2 bg-primary rounded-full animate-bounce"
@@ -136,7 +120,7 @@ export function ChatWindow({
             className="min-h-[60px] max-h-[200px] resize-none"
             disabled={isSending}
           />
-          <Button type="submit" disabled={!input.trim() || isSending}>
+          <Button type="submit" disabled={!input.trim() || isSending} aria-label="Send message">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               viewBox="0 0 24 24"
@@ -146,6 +130,7 @@ export function ChatWindow({
               strokeLinecap="round"
               strokeLinejoin="round"
               className="h-4 w-4"
+              aria-hidden="true"
             >
               <line x1="22" y1="2" x2="11" y2="13" />
               <polygon points="22 2 15 22 11 13 2 9 22 2" />
@@ -194,6 +179,45 @@ function ChatBubble({ message, onGovernanceSubmit }: ChatBubbleProps) {
         </div>
       );
     }
+
+    // Governance payload parse error fallback
+    return (
+      <div className="flex justify-start">
+        <div className="max-w-[80%] rounded-lg px-4 py-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+          <div className="flex items-center gap-2 text-red-800 dark:text-red-200">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-5 w-5"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <span className="font-medium">Unable to load governance widget</span>
+          </div>
+          <p className="mt-2 text-sm text-red-700 dark:text-red-300">
+            The governance request data could not be processed. This may be due to a workflow configuration issue.
+          </p>
+          {parseResult.error && (
+            <details className="mt-2">
+              <summary className="text-xs text-red-600 dark:text-red-400 cursor-pointer hover:underline">
+                Show error details
+              </summary>
+              <pre className="mt-1 text-xs bg-red-100 dark:bg-red-950 p-2 rounded overflow-x-auto text-red-800 dark:text-red-200">
+                {parseResult.error.message}
+              </pre>
+            </details>
+          )}
+        </div>
+      </div>
+    );
   }
 
   // Check if this is a phase update message
